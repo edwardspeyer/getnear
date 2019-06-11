@@ -12,9 +12,8 @@ class PortTypes(object):
 class Config(object):
     def __init__(self, dict):
         self.dict = dict
-
-    def password(self):
-        return self.dict['password']
+        self.password_old = dict.get('password_old')
+        self.password = dict.get('password')
 
     def ports(self):
         for index, pc in enumerate(self.dict['vlan_ports']):
@@ -151,6 +150,7 @@ class MembershipCodec(object):
 class Actions(object):
     LOGIN = '/login.cgi'
     LOGOUT = '/logout.cgi'
+    USER = '/user.cgi'
     VLAN_CONFIG = '/8021qCf.cgi'
     VLAN_MEMBERS = '/8021qMembe.cgi'
     PORT_PVID = '/portPVID.cgi'
@@ -158,11 +158,28 @@ class Actions(object):
     def __init__(self, browser):
         self.browser = browser
 
-    def login(self, password):
+    def login(self, password='password'):
         self.browser.request(Actions.LOGIN, {'password': password})
+        return 'Invalid Password' not in self.browser.page.html
 
     def logout(self):
         self.browser.request(Actions.LOGOUT)
+
+    def change_password(self, old_password, new_password):
+        self.browser.request(Actions.USER)
+        params = {
+                'oldPassword':      old_password,
+                'newPassword':      new_password,
+                'reNewPassword':    new_password,
+                'hash':             self.browser.page.input_value('hash'),
+                }
+        try:
+            self.browser.request(Actions.USER, params)
+        except Exception as ex:
+            if ex.message == 'Password changed successfully!':
+                return
+            else:
+                raise ex
 
     def is_vlans_enabled(self):
         self.browser.request(Actions.VLAN_CONFIG)
@@ -263,92 +280,100 @@ class Actions(object):
         self.browser.request(Actions.PORT_PVID, params)
 
 
+def sync(fqdn, config):
+    conn = httplib.HTTPConnection(fqdn, 80)
+    agent = Agent(conn)
+    browser = Browser(agent)
+    actions = Actions(browser)
+
+    try:
+        did_change = False
+
+        if actions.login(config.password_old):
+            did_change = True
+            print("Changing password")
+            actions.change_password(config.password_old, config.password)
+
+        actions.login(config.password)
+
+        if not actions.is_vlans_enabled():
+            did_change = True
+            print "Enabling VLANs"
+            actions.enable_vlans()
+
+        current_vlans = actions.get_vlans()
+
+        # Add all VLANs
+        for vlan_id in config.vlan_ids():
+            if vlan_id not in current_vlans:
+                print "Adding new VLAN {}".format(vlan_id)
+                actions.add_vlan(vlan_id)
+                did_change = True
+
+        for (index, pvid_vlan, _, _) in config.ports():
+            # Ensure port is untagged member of its PVID VLAN
+            membership = actions.get_membership(pvid_vlan)
+            if membership[index] != PortTypes.UNTAGGED:
+                print(
+                        "Changing port #{} to be untagged member of VLAN {}".format(
+                            index + 1, pvid_vlan))
+                membership[index] = PortTypes.UNTAGGED
+                actions.set_membership(pvid_vlan, membership)
+                did_change = True
+
+            # Set PVID
+            if actions.get_pvid(index) != pvid_vlan:
+                print(
+                        "Setting PVID for port #{} to {}".format(
+                            index + 1, pvid_vlan))
+                actions.set_pvid(index, pvid_vlan)
+                did_change = True
+
+        # Set membership
+        for vlan_id, membership in config.memberships():
+            if actions.get_membership(vlan_id) != membership:
+                print(
+                        "Changing VLAN {:4d} membership: {!r}".format(
+                            vlan_id,
+                            membership))
+                actions.set_membership(vlan_id, membership)
+                did_change = True
+
+        # Delete unwanted config from switch:
+        for vlan_id in current_vlans:
+            if vlan_id in config.vlan_ids():
+                continue
+            did_change = True
+
+            print("Delete membership for VLAN {}".format(vlan_id))
+            null_membership = [None for _ in config.ports()]
+            actions.set_membership(vlan_id, null_membership)
+
+            print("Delete VLAN {}".format(vlan_id))
+            actions.delete_vlan(vlan_id)
+
+
+    finally:
+        actions.logout()
+
+
+
 import yaml
 config = Config(yaml.load(
         """
-        password: password
+        password_old: password
+        password: password44
         vlan_ports:
             - pvid: 1
-              tagged: [12, 13, 14, 15]
               untagged: [1]
-            - pvid: 12
-              untagged: [12]
-            - pvid: 13
-              untagged: [13]
-            - pvid: 14
-              untagged: [14]
             - pvid: 1
-              tagged: [12, 13, 14, 15]
               untagged: [1]
+            - pvid: 99
+              untagged: [99]
+            - pvid: 99
+              untagged: [99]
+            - pvid: 99
+              untagged: [99]
         """))
 
-fqdn = '10.3.1.50'
-password = 'password'
-conn = httplib.HTTPConnection(fqdn, 80)
-agent = Agent(conn)
-browser = Browser(agent)
-actions = Actions(browser)
-
-try:
-    did_change = False
-    actions.login(password)
-
-    if not actions.is_vlans_enabled():
-        did_change = True
-        print "Enabling VLANs"
-        actions.enable_vlans()
-
-    current_vlans = actions.get_vlans()
-
-    # Add all VLANs
-    for vlan_id in config.vlan_ids():
-        if vlan_id not in current_vlans:
-            print "Adding new VLAN {}".format(vlan_id)
-            actions.add_vlan(vlan_id)
-            did_change = True
-
-    for (index, pvid_vlan, _, _) in config.ports():
-        # Ensure port is untagged member of its PVID VLAN
-        membership = actions.get_membership(pvid_vlan)
-        if membership[index] != PortTypes.UNTAGGED:
-            print(
-                    "Changing port #{} to be untagged member of VLAN {}".format(
-                        index + 1, pvid_vlan))
-            membership[index] = PortTypes.UNTAGGED
-            actions.set_membership(pvid_vlan, membership)
-            did_change = True
-
-        # Set PVID
-        if actions.get_pvid(index) != pvid_vlan:
-            print(
-                    "Setting PVID for port #{} to {}".format(
-                        index + 1, pvid_vlan))
-            actions.set_pvid(index, pvid_vlan)
-            did_change = True
-
-    # Set membership
-    for vlan_id, membership in config.memberships():
-        if actions.get_membership(vlan_id) != membership:
-            print(
-                    "Changing VLAN {:4d} membership: {!r}".format(
-                        vlan_id,
-                        membership))
-            actions.set_membership(vlan_id, membership)
-            did_change = True
-
-    # Delete unwanted config from switch:
-    for vlan_id in current_vlans:
-        if vlan_id in config.vlan_ids():
-            continue
-        did_change = True
-
-        print("Delet membership for VLAN {}".format(vlan_id))
-        null_membership = [None for _ in config.ports()]
-        actions.set_membership(vlan_id, null_membership)
-
-        print("Delete VLAN {}".format(vlan_id))
-        actions.delete_vlan(vlan_id)
-
-
-finally:
-    actions.logout()
+sync('10.3.1.50', config)
