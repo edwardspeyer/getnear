@@ -84,6 +84,30 @@ class Actions(object):
         self.agent.post(VLAN_CONFIG, params)
         return True
 
+    def delete_vlan(self, vlan_id):
+        body = self.agent.get(VLAN_CONFIG).read()
+        hash = self.get_input(body, 'hash')
+        vlanck = next(
+                i.get('name')
+                for i in inputs(body)
+                if i.get('name', '').startswith('vlanck')
+                and i.get('value') == str(vlan_id)
+                )
+        vlan_num = next(
+                i.get('value')
+                for i in inputs(body)
+                if i.get('name') == 'vlanNum'
+                )
+        params = {
+                'status':       'Enable',
+                'ADD_VLANID':   '',
+                vlanck:         str(vlan_id),
+                'vlanNum':      vlan_num,
+                'hash':         hash,
+                'ACTION':       'Delete',
+                }
+        self.agent.post(VLAN_CONFIG, params)
+
     def get_members(self, vlan_id):
         return self.get_or_set_members(vlan_id, None)
 
@@ -122,11 +146,6 @@ class Actions(object):
 
         hash = self.get_input(body, 'hash')
         encoded_membership = encode_membership(port_types)
-        print("SETTING {} to {!r} / {}".format(
-            vlan_id,
-            port_types,
-            encoded_membership
-            ))
         params = {
                 'VLAN_ID': vlan_id,
                 'hash': hash,
@@ -156,9 +175,10 @@ class Actions(object):
                 port_key: 'checked',
                 'hash': hash,
                 }
-        print(params)
         body = self.agent.post(PORT_PVID, params).read()
+        self.raise_errors(body)
 
+    def raise_errors(self, body):
         error_re = "id='err_msg' value='(.+?)'"
         match = re.search(error_re, body)
         if match:
@@ -173,9 +193,9 @@ def inputs(html):
             ]
 
 # 31312 = _U_UT
-PORT_UNTAGGED = 'UNTAGGED'
-PORT_TAGGED = 'TAGGED'
-PORT_NOT_A_MEMBER = 'NOT_A_MEMBER'
+PORT_UNTAGGED = 'U'
+PORT_TAGGED = 'T'
+PORT_NOT_A_MEMBER = '_'
 
 PORT_TYPES = {
         '1': PORT_UNTAGGED,
@@ -199,30 +219,97 @@ conn = httplib.HTTPConnection(fqdn, 80)
 agent = Agent(conn)
 actions = Actions(agent)
 
+import yaml
+ports_config = yaml.load(
+        """
+        - pvid: 1
+          tagged: [1, 12, 13, 14, 15]
+        - pvid: 12
+          untagged: 12
+        - pvid: 74
+          untagged: 74
+          tagged: [12, 15]
+        - pvid: 99
+          untagged: 99
+        - pvid: 1
+          tagged: [1, 12, 13, 14, 15]
+        """)
+
+class Config(object):
+    def __init__(self, ports_config):
+        self.ports_config = ports_config
+    
+    def ports(self):
+        for pc in self.ports_config:
+            pvid = pc['pvid']
+            tagged = pc.get('tagged', [])
+            if not isinstance(tagged, list):
+                tagged = [tagged]
+            untagged = pc.get('untagged', [])
+            if not isinstance(untagged, list):
+                untagged = [untagged]
+            yield (pvid, tagged, untagged)
+
+    def vlan_ids(self):
+        all = [
+                [[pvid], tagged, untagged]
+                for (pvid, tagged, untagged) in self.ports()
+                ]
+        flat = [i for list1 in all for list2 in list1 for i in list2]
+        return sorted(set(flat))
+
+    def memberships(self):
+        for vlan_id in self.vlan_ids():
+            membership = [
+                    (
+                        PORT_TAGGED     if vlan_id in tagged else
+                        PORT_UNTAGGED   if vlan_id in untagged else
+                        PORT_NOT_A_MEMBER
+                    )
+                    for (pvid, tagged, untagged) in self.ports()
+                    ]
+            yield (vlan_id, membership)
+
+
+config = Config(ports_config)
+
 try:
     actions.login(password)
     if not actions.is_advanced_VLAN_enabled():
         print "ENABLE_VLAN"
         actions.enable_advanced_VLAN()
 
-    print actions.add_vlan(7)
+    did_change = False
 
-    print actions.get_members(148)
+    # Sync config to switch:
+    for (vlan_id, membership) in config.memberships():
+        print("ADD VLAN {}".format(vlan_id))
+        if actions.add_vlan(vlan_id):
+            did_change = True
 
-    print actions.set_members(
-            148,
-            [
-                PORT_UNTAGGED,
-                PORT_TAGGED,
-                PORT_TAGGED,
-                PORT_UNTAGGED,
-                PORT_NOT_A_MEMBER,
-            ]
-        )
+        print("VLAN MEMBERSHIP {!r}".format(membership))
+        if actions.set_members(vlan_id, membership):
+            did_change = True
 
-    print actions.get_pvids()
+    for (port_index, (pvid, _, _)) in enumerate(config.ports()):
+        print("PORT {} PVID {}".format(port_index, pvid))
+        if actions.set_pvid(port_index, pvid):
+            did_change = True
 
-    print actions.set_pvid(3, 14)
+    # Delete unwanted config from switch:
+    for vlan_id in actions.get_vlans():
+        if vlan_id in config.vlan_ids():
+            continue
+        
+        print("DELETE MEMBERSHIP {}".format(vlan_id))
+        null_membership = [PORT_NOT_A_MEMBER for _ in config.ports()]
+        if actions.set_members(vlan_id, null_membership):
+            did_change = True
+
+        print("DELETE VLAN {}".format(vlan_id))
+        if actions.delete_vlan(vlan_id):
+            did_change = True
+
 finally:
     print "Logging out..."
     actions.logout()
