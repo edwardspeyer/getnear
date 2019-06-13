@@ -96,6 +96,7 @@ class HTML(object):
 
 
 class Actions(object):
+    HOME = '/login.htm'
     LOGIN = '/login.cgi'
     LOGOUT = '/logout.cgi'
     USER = '/user.cgi'
@@ -106,9 +107,22 @@ class Actions(object):
     def __init__(self, browser):
         self.browser = browser
 
+    def number_of_ports(self):
+        try:
+            self.browser.get(Actions.LOGIN)
+        except Exception:
+            pass
+
+        match = re.search('(\d+)-Port', str(self.browser.page))
+        if match:
+            return int(match.groups()[0])
+        else:
+            raise Exception("unable to guess number of ports")
+
     def login(self, password='password'):
         self.browser.post(Actions.LOGIN, {'password': password})
-        return 'Invalid Password' not in self.browser.page.html
+        if 'Invalid Password' in self.browser.page.html:
+            raise Exception("Invalid Password!")
 
     def logout(self):
         self.browser.get(Actions.LOGOUT)
@@ -181,6 +195,9 @@ class Actions(object):
                 'hash':         self.browser.page.input_value('hash'),
                 'ACTION':       'Delete',
                 }
+        # Another v2 (GS108) quirk
+        if self.browser.page.input_value('hiddVlan') is not None:
+            params['hiddVlan'] = ''
         self.browser.post(Actions.VLAN_CONFIG, params)
 
     def get_membership(self, vlan_id):
@@ -195,6 +212,10 @@ class Actions(object):
                 'hash':         self.browser.page.input_value('hash'),
                 'hiddenMem':    self.browser.page.input_value('hiddenMem'),
                 }
+        current_vlan_id = self.browser.page.input_value('VLAN_ID_HD')
+        # A quirk of firmware v2 (on GS108v3)
+        if current_vlan_id:
+            params['VLAN_ID_HD'] = current_vlan_id
         self.browser.post(Actions.VLAN_MEMBERS, params)
         membership_string = self.browser.page.input_value('hiddenMem')
         return [c for c in membership_string]
@@ -219,7 +240,7 @@ class Actions(object):
         self.browser.get(Actions.PORT_PVID)
         #body = self.agent.get(PORT_PVID).read()
         #hash = self.get_input(body, 'hash')
-        port_key = 'port{}'.format(port_index)
+        port_key = 'port{}'.format(port_index + 1)
         params = {
                 'pvid':     str(pvid),
                 port_key:   'checked',
@@ -236,138 +257,178 @@ def change(message):
     print(" CHANGE {}".format(message))
 
 
-def sync(hostname, password_old, password_new, vlans, pvids):
-    check('connection')
-    conn = httplib.HTTPConnection(hostname, 80)
-    browser = Browser(conn)
-    actions = Actions(browser)
-
-    try:
-        did_change = False
-
-        check("old password")
-        if actions.login(password_old):
-            did_change = True
-            change('password')
-            actions.change_password(password_old, password_new)
-
-        check('new password')
-        actions.login(password_new)
-
-        check("802.1Q Advanced VLANS enabled")
-        if not actions.is_vlans_enabled():
-            did_change = True
-            change('enable')
-            actions.enable_vlans()
-
-        current_vlans = actions.get_vlans()
-
-        # Add all VLANs
-        for vlan_id in vlans.keys():
-            check("presence of VLAN {}".format(vlan_id))
-            if vlan_id not in current_vlans:
-                change("VLAN {}".format(vlan_id))
-                actions.add_vlan(vlan_id)
-                did_change = True
-
-        for port_index, pvid_vlan in enumerate(pvids):
-            port_number = port_index + 1
-
-            # Ensure port is some kind of member of its PVID VLAN
-            membership = actions.get_membership(pvid_vlan)
-            if membership[port_index] == PortTypes.NONE:
-                membership[port_index] = PortTypes.UNTAGGED
-                actions.set_membership(pvid_vlan, membership)
-                did_change = True
-
-            # Set PVID
-            check("PVID for port #{}".format(port_number))
-            if actions.get_pvid(port_index) != pvid_vlan:
-                change("PVID for port #{} to {}".format(port_number, pvid_vlan))
-                actions.set_pvid(port_index, pvid_vlan)
-                did_change = True
-
-        # Set membership
-        for vlan_id, membership in vlans.iteritems():
-            check("membership of VLAN {}".format(vlan_id))
-            if actions.get_membership(vlan_id) != membership:
-                change("membership of VLAN {}".format(vlan_id))
-                actions.set_membership(vlan_id, membership)
-                did_change = True
-
-        # Delete unwanted config from switch:
-        for vlan_id in current_vlans:
-            if vlan_id in vlans:
-                continue
-            did_change = True
-
-            change("delete membership for VLAN {}".format(vlan_id))
-            null_membership = [PortTypes.NONE for _ in pvids]
-            actions.set_membership(vlan_id, null_membership)
-
-            change("delete VLAN {}".format(vlan_id))
-            actions.delete_vlan(vlan_id)
-
-
-    finally:
-        actions.logout()
-
-
 #
 # CLI
 #
-# U = PortTypes.UNTAGGED
-# T = PortTypes.TAGGED
-# N = PortTypes.NONE
+# Either literally state the port PVIDs and VLAN memberships, in a way that
+# mirrors the web UI:
 #
-# password_old = 'password'
-# password_new = 'password44'
+#   netgear-switch-vlans                    \
+#           --hostname 10.3.1.50            \
+#           --password password44           \
+#           --password-old password         \
+#           --pvids      1  11  13  15  97  \
+#           --vlan   1   T   _   _   _   T  \
+#           --vlan  11   T   U   _   _   T  \
+#           --vlan  13   T   _   U   _   T  \
+#           --vlan  15   T   _   _   U   T
 #
-# vlans = {
-#         1:  [U, N, U, N, N],
-#         32: [T, U, N, N, N],
-#         97: [N, N, T, T, U],
-#         }
+# Or list trunk ports and static-host ports, and have everything derived
+# automatically:
 #
-# pvids = [1, 32, 1, 97, 97]
+#   netgear-switch-vlans                \
+#           --hostname 10.3.1.50        \
+#           --password password44       \
+#           --password-old password     \
+#           --trunk-port 1              \
+#           --host-port  2 11           \
+#           --host-port  3 13           \
+#           --host-port  4 15           \
+#           --trunk-port 5
 #
-# sync('10.3.1.50', password_old, password_new, vlans, pvids)
-#
-#
-# 
-# netgear-switch-vlans \
-#         --hostname 10.3.1.50 \
-#         --password password44 \
-#         --password-old password \
-#         --pvids 1 32 1 97 97
-#         --vlan  1 U _ U _ _ \
-#         --vlan 32 T U _ _ _ \
-#         --vlan 97 _ _ T T U
 
 import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('--hostname', type=str)
 parser.add_argument('--password', type=str)
-parser.add_argument('--password-old', type=str, default='password')
+parser.add_argument('--old-password', type=str, default='password')
+
 parser.add_argument('--pvids', type=int, nargs='+')
-parser.add_argument('--vlan', type=str, nargs='+', action='append')
+parser.add_argument('--vlan', type=str, nargs='+', action='append', default=[])
+
+parser.add_argument('--trunk-port', type=int, action='append', default=[])
+parser.add_argument('--host-port', type=int, nargs='+', action='append', default=[])
+
 args = parser.parse_args()
 
 hostname = args.hostname
 password_new = args.password
-password_old = args.password_old
-pvids = args.pvids
-vlans = dict(
-        (
-            int(list[0]),
-            [
-                PortTypes.TAGGED if v == 'T' else
-                PortTypes.UNTAGGED if v == 'U' else
-                PortTypes.NONE
-                for v in list[1:]
-            ]
-        )
-        for list in args.vlan
-        )
+password_old = args.old_password
 
-sync(hostname, password_old, password_new, vlans, pvids)
+# Create a connection
+check('connection')
+conn = httplib.HTTPConnection(hostname, 80)
+browser = Browser(conn)
+actions = Actions(browser)
+
+# Get number of ports
+num_ports = actions.number_of_ports()
+
+# Baseline
+pvids = [1 for _ in range(0, num_ports)]
+vlans = {
+        1: [PortTypes.UNTAGGED for _ in range(0, num_ports)]
+        }
+
+# If we're given port-pvids, use those instead
+if args.pvids:
+    pvids = args.pvids
+
+# Construct VLAN members from literal command line arguments
+for list in args.vlan:
+    vlan_id = int(list[0])
+    membership = [
+        PortTypes.TAGGED if v == 'T' else
+        PortTypes.UNTAGGED if v == 'U' else
+        PortTypes.NONE
+        for v in list[1:]
+    ]
+    vlans[vlan_id] = membership
+
+# Host port settings take precedence
+for port, vlan in args.host_port:
+    index = port - 1
+    pvids[index] = vlan
+    if vlan not in vlans:
+        vlans[vlan] = [PortTypes.NONE for _ in range(0, num_ports)]
+    vlans[1][index] = PortTypes.NONE
+    vlans[vlan][index] = PortTypes.UNTAGGED
+
+# Trunk port settings take precedence
+for port in args.trunk_port:
+    index = port - 1
+    pvids[index] = 1
+    if 1 not in vlans:
+        vlans[1] = [PortTypes.NONE for _ in range(0, num_ports)]
+    for vlan, membership in vlans.iteritems():
+        membership[index] = PortTypes.TAGGED
+
+# Print settings
+print(" TODO   pvids {!r}".format(pvids))
+for vlan_id, membership in vlans.iteritems():
+    print(" TODO   vlan {} = {!r}".format(vlan_id, membership))
+
+# Sync all settings
+try:
+    check("old password")
+    old_password_valid = False
+    try:
+        actions.login(password_old)
+        old_password_valid = True
+    except Exception:
+        pass
+
+    if old_password_valid:
+        actions.change_password(password_old, password_new)
+        change('password')
+
+    check('new password')
+    actions.login(password_new)
+
+    check("802.1Q Advanced VLANS enabled")
+    if not actions.is_vlans_enabled():
+        change('enable')
+        actions.enable_vlans()
+
+    current_vlans = actions.get_vlans()
+
+    # Add all VLANs
+    for vlan_id in vlans.keys():
+        check("presence of VLAN {}".format(vlan_id))
+        if vlan_id not in current_vlans:
+            change("VLAN {}".format(vlan_id))
+            actions.add_vlan(vlan_id)
+
+    for port_index, pvid_vlan in enumerate(pvids):
+        port_number = port_index + 1
+
+        # Ensure port is some kind of member of its PVID VLAN
+        check("port #{} is member of VLAN {}".format(
+            port_number, pvid_vlan))
+        membership = actions.get_membership(pvid_vlan)
+        if membership[port_index] == PortTypes.NONE:
+            membership[port_index] = PortTypes.UNTAGGED
+            change("port #{} to be untagged member of VLAN {}".format(
+                port_number, pvid_vlan))
+            actions.set_membership(pvid_vlan, membership)
+
+        # Set PVID
+        check("PVID for port #{} is {}".format(port_number, pvid_vlan))
+        if actions.get_pvid(port_index) != pvid_vlan:
+            change("PVID for port #{} to {}".format(port_number, pvid_vlan))
+            actions.set_pvid(port_index, pvid_vlan)
+
+    # Set membership
+    for vlan_id, membership in vlans.iteritems():
+        check("membership of VLAN {}".format(vlan_id))
+        current_membership = actions.get_membership(vlan_id)
+        if current_membership != membership:
+            change("membership of VLAN {} from {!r} to {!r}".format(
+                vlan_id, current_membership, membership))
+            actions.set_membership(vlan_id, membership)
+
+    # Delete unwanted config from switch:
+    for vlan_id in current_vlans:
+        if vlan_id in vlans:
+            continue
+
+        change("delete membership for VLAN {}".format(vlan_id))
+        null_membership = [PortTypes.NONE for _ in pvids]
+        actions.set_membership(vlan_id, null_membership)
+
+        change("delete VLAN {}".format(vlan_id))
+        actions.delete_vlan(vlan_id)
+
+
+finally:
+    actions.logout()
