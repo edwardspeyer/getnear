@@ -240,7 +240,15 @@ class Actions(object):
         self.browser.get(Actions.PORT_PVID)
         #body = self.agent.get(PORT_PVID).read()
         #hash = self.get_input(body, 'hash')
-        port_key = 'port{}'.format(port_index + 1)
+
+        # Quirk fix:
+        # On GS105 these are numbered (port0, port1, ...)
+        # On GS108 these are numbered (port1, port2, ...)
+        port_key_index = port_index
+        if 'port0' not in [i.get('name') for i in self.browser.page.inputs()]:
+            port_key_index = port_key_index + 1
+
+        port_key = 'port{}'.format(port_key_index)
         params = {
                 'pvid':     str(pvid),
                 port_key:   'checked',
