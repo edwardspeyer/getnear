@@ -1,8 +1,14 @@
+################################################################################
+#
+# Netgear API Code
+#
 import httplib
 import os
 import re
 import urllib
 
+
+DEFAULT_PASSWORD = 'password'
 
 class PortTypes(object):
     UNTAGGED = '1'
@@ -145,7 +151,7 @@ class Actions(object):
     def get_vlans(self):
         self.browser.get(Actions.VLAN_CONFIG)
         vlans = [
-                int(i['value'])
+                i['value']
                 for i in self.browser.page.inputs()
                 if i['name'].startswith('vlanck')
                 ]
@@ -209,7 +215,7 @@ class Actions(object):
         self.browser.get(Actions.PORT_PVID)
         html = self.browser.page.html
         pvids_re = '<td class="def" sel="input">(\d+)'
-        pvids = [int(s) for s in re.findall(pvids_re, html)]
+        pvids = [s for s in re.findall(pvids_re, html)]
         return pvids[port_index]
 
     def set_pvid(self, port_index, pvid):
@@ -225,34 +231,31 @@ class Actions(object):
         self.browser.post(Actions.PORT_PVID, params)
 
 
-def sync(fqdn, password_old, password_new, vlans, pvids):
-    conn = httplib.HTTPConnection(fqdn, 80)
+def sync(address, password_old, password_new, vlans, pvids):
+    conn = httplib.HTTPConnection(address, 80)
     browser = Browser(conn)
     actions = Actions(browser)
 
-    try:
-        did_change = False
+    log = []
 
+    try:
         if actions.login(password_old):
-            did_change = True
-            print("Changing password")
             actions.change_password(password_old, password_new)
+            log.append("Changed password")
 
         actions.login(password_new)
 
         if not actions.is_vlans_enabled():
-            did_change = True
-            print "Enabling VLANs"
             actions.enable_vlans()
+            log.append("Enabled Advanced 802.1Q VLAN mode")
 
         current_vlans = actions.get_vlans()
 
         # Add all VLANs
         for vlan_id in vlans.keys():
             if vlan_id not in current_vlans:
-                print "Adding new VLAN {}".format(vlan_id)
                 actions.add_vlan(vlan_id)
-                did_change = True
+                log.append("Added new VLAN {}".format(vlan_id))
 
         for port_index, pvid_vlan in enumerate(pvids):
             port_number = port_index + 1
@@ -260,63 +263,118 @@ def sync(fqdn, password_old, password_new, vlans, pvids):
             # Ensure port is some kind of member of its PVID VLAN
             membership = actions.get_membership(pvid_vlan)
             if membership[port_index] == PortTypes.NONE:
-                print(
-                        "Temporarily changing port #{} to be untagged member of VLAN {}".format(
-                            port_number, pvid_vlan))
                 membership[port_index] = PortTypes.UNTAGGED
                 actions.set_membership(pvid_vlan, membership)
-                did_change = True
 
             # Set PVID
             if actions.get_pvid(port_index) != pvid_vlan:
-                print(
-                        "Setting PVID for port #{} to {}".format(
-                            port_number, pvid_vlan))
                 actions.set_pvid(port_index, pvid_vlan)
-                did_change = True
+                log.append("Set PVID for port {} to {}".format(
+                    port_number, pvid_vlan))
 
         # Set membership
         for vlan_id, membership in vlans.iteritems():
-            if actions.get_membership(vlan_id) != membership:
-                print(
-                        "Changing VLAN {:4d} membership: {!r}".format(
-                            vlan_id,
-                            membership))
+            current_membership = actions.get_membership(vlan_id)
+            log.append('{}: {!r} ==? {!r}'.format(
+                vlan_id, current_membership, membership))
+            if current_membership != membership:
                 actions.set_membership(vlan_id, membership)
-                did_change = True
+                log.append("Changed VLAN {} membership to {!r}".format(
+                    vlan_id, membership))
 
         # Delete unwanted config from switch:
         for vlan_id in current_vlans:
             if vlan_id in vlans:
                 continue
-            did_change = True
-
-            print("Delete membership for VLAN {}".format(vlan_id))
             null_membership = [PortTypes.NONE for _ in pvids]
             actions.set_membership(vlan_id, null_membership)
-
-            print("Delete VLAN {}".format(vlan_id))
             actions.delete_vlan(vlan_id)
+            log.append("Deleted VLAN {}".format(vlan_id))
 
 
     finally:
         actions.logout()
+        return log
 
 
+################################################################################
+#
+# Ansible Module
+#
+ANSIBILE_METADATA = {
+    'metadata_version': '1.1',
+    'status': ['preview'],
+    'supported_by': 'community'
+}
 
-U = PortTypes.UNTAGGED
-T = PortTypes.TAGGED
-N = PortTypes.NONE
+DOCUMENTATION = '''
+'''
 
-password_old = 'password'
-password_new = 'password44'
+EXAMPLES = '''
+'''
 
-vlans = {
-        1:  [U, N, U, N, N],
-        32: [T, U, N, N, N],
-        97: [N, N, T, T, U],
-        }
+from ansible.module_utils.basic import AnsibleModule
 
-pvids = [1, 32, 1, 97, 97]
+def run_module():
+    # define available arguments/parameters a user can pass to the module
+    module_args = dict(
+        address=dict(type='str', required=True),
+        password=dict(type='str', required=True, no_log=True),
+        password_old=dict(type='str', required=False, no_log=True),
+        pvids=dict(type='list', required=True),
+        vlans=dict(type='dict', required=True),
+    )
 
-sync('10.3.1.50', password_old, password_new, vlans, pvids)
+    # seed the result dict in the object
+    # we primarily care about changed and state
+    # change is if this module effectively modified the target
+    # state will include any data that you want your module to pass back
+    # for consumption, for example, in a subsequent task
+    result = dict(
+        changed=False,
+    )
+
+    # the AnsibleModule object will be our abstraction working with Ansible
+    # this includes instantiation, a couple of common attr would be the
+    # args/params passed to the execution, as well as if the module
+    # supports check mode
+    module = AnsibleModule(
+        argument_spec=module_args,
+        supports_check_mode=False
+    )
+
+    address = module.params['address']
+    password_new = module.params['password']
+    password_old = module.params.get('password_old', DEFAULT_PASSWORD)
+    pvids = module.params['pvids']
+
+    vlans = {}
+    for vlan_id, membership in module.params['vlans'].iteritems():
+        vlans[vlan_id] = [
+                (PortTypes.TAGGED if m == 'T' else
+                    PortTypes.UNTAGGED if m == 'U' else
+                    PortTypes.NONE)
+                for m in membership
+                ]
+
+    log = sync(address, password_old, password_new, vlans, pvids)
+
+    if log:
+        result['changed'] = True
+        result['log'] = log
+
+    # during the execution of the module, if there is an exception or a
+    # conditional state that effectively causes a failure, run
+    # AnsibleModule.fail_json() to pass in the message and the result
+    #if module.params['name'] == 'fail me':
+    #    module.fail_json(msg='You requested this to fail', **result)
+
+    # in the event of a successful module execution, you will want to
+    # simple AnsibleModule.exit_json(), passing the key/value results
+    module.exit_json(**result)
+
+def main():
+    run_module()
+
+if __name__ == '__main__':
+    main()
