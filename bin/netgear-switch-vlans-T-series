@@ -1,0 +1,296 @@
+#!/usr/bin/env python
+
+import pexpect
+import re
+import StringIO
+import sys
+
+
+class API(object):
+    RESERVED_VLANS = [1, 2, 3]
+
+    def __init__(self, hostname):
+        log = open('/tmp/expect.log', 'w')
+        self.p = pexpect.spawn(
+                'telnet {} 60000'.format(hostname),
+                timeout=2,
+                logfile=log)
+        self._flush()
+
+    def login(self, password):
+        self.p.sendline('')
+        self.p.expect('please wait ...')
+        self.p.sendline('admin')
+        self.p.expect('Password:')
+        self.p.sendline(password)
+        i = self.p.expect(['>', 'please wait ...'])
+        if i == 1:
+            return False
+        self.p.send("enable\n\n")
+        self.p.expect('#')
+        return True
+
+    def exit(self):
+        # Leave "enable" mode
+        self.p.sendline('exit')
+        # Logout
+        self.p.expect('>')
+        self.p.sendline('logout')
+
+    def change_password(self, password_old, password_new):
+        # TODO For this to work, we have to leave "enable" mode.  It would be
+        # better if all other commands entererd enable mode instead.  More
+        # verbose, but less confusing.  Maybe have a cursor to remember which
+        # mode we are in?
+        self.p.sendline('exit')
+        self.p.expect('>')
+        self.p.sendline('passwd')
+        self.p.expect('Enter old password:')
+        self.p.sendline(password_old)
+        self.p.expect('Enter new password:')
+        self.p.sendline(password_new)
+        self.p.expect('Confirm new password:')
+        self.p.sendline(password_new)
+        self.p.expect('Password Changed!')
+        self.p.send('enable\n\n')
+        self.p.expect('#')
+
+    def get_current_vlan_config(self):
+        return dict(
+            (id, self._show_vlan( id))
+            for id in self._show_vlan_brief()
+        )
+
+    def get_current_port_pvids(self):
+        self._flush()
+        self.p.sendline('show vlan port all')
+        self._page()
+        pattern = re.compile(
+                '^0/(\d+) +(\d+) +(\d+)',
+                re.MULTILINE)
+        return dict(
+                (int(port), int(pvid))
+                for port, pvid, _
+                in re.findall(pattern, self._read())
+                )
+
+    def add_vlan(self, id):
+        self._modify_vlan(id, True)
+
+    def delete_vlan(self, id):
+        self._modify_vlan(id, False)
+
+    def set_port_pvid(self, port, id):
+        self.p.sendline('configure')
+        self.p.expect('#')
+        self.p.sendline('interface 0/{}'.format(port))
+        self.p.expect('#')
+        self.p.sendline('vlan pvid {}'.format(id))
+        self.p.expect('#')
+        self.p.sendline('exit')
+        self.p.expect('#')
+        self.p.sendline('exit')
+        self.p.expect('#')
+
+    def set_port_vlan_participation(self, port, id, is_included):
+        state = 'include'
+        if not is_included:
+            state = 'exclude'
+        self.p.sendline('configure')
+        self.p.expect('#')
+        self.p.sendline('interface 0/{}'.format(port))
+        self.p.expect('#')
+        self.p.sendline('vlan participation {} {}'.format(state, id))
+        self.p.expect('#')
+        self.p.sendline('exit')
+        self.p.expect('#')
+        self.p.sendline('exit')
+        self.p.expect('#')
+
+    def set_port_vlan_tagging(self, port, id, is_tagged):
+        no = ''
+        if not is_tagged:
+            no = 'no '
+        self.p.sendline('configure')
+        self.p.expect('#')
+        self.p.sendline('interface 0/{}'.format(port))
+        self.p.expect('#')
+        self.p.sendline('{}vlan tagging {}'.format(no, id))
+        self.p.expect('#')
+        self.p.sendline('exit')
+        self.p.expect('#')
+        self.p.sendline('exit')
+        self.p.expect('#')
+
+    COMMAND_PROMPT = '#'
+    PAGER_PROMPT = '--More-- or .q.uit'
+
+    def _show_vlan_brief(self):
+        self._flush()
+        self.p.sendline('show vlan brief')
+        self._page()
+        pattern = re.compile(
+                '^(\d......) (................................)',
+                re.MULTILINE)
+        matches = re.findall(pattern, self._read())
+        return [int(id.strip()) for id, name in matches]
+
+    def _show_vlan(self, id):
+        self._flush()
+        self.p.sendline('show vlan {}'.format(id))
+        self._page()
+        pattern = re.compile(
+                '^0/(\d+) +(\S+) +(\S+) +(\S+)',
+                re.MULTILINE)
+        matches = re.findall(pattern, self._read())
+        return dict(
+                (
+                    int(port),
+                    (
+                        (current == 'Include'),
+                        (tagging == 'Tagged')
+                    )
+                )
+                for port, current, _, tagging in matches
+                )
+
+    def _modify_vlan(self, id, is_add):
+        if is_add:
+            command = 'vlan'
+        else:
+            command = 'no vlan'
+        self.p.sendline('vlan database')
+        self.p.expect('#')
+        self.p.sendline('{} {}'.format(command, id))
+        self.p.expect('#')
+        self.p.sendline('exit')
+        self.p.expect('#')
+
+    def _page(self):
+        while True:
+            i = self.p.expect([
+                self.PAGER_PROMPT,
+                self.COMMAND_PROMPT
+            ])
+            if i == 0:
+                self.p.send('\n')
+            else:
+                return
+
+    def _flush(self):
+        self.buffer = StringIO.StringIO()
+        self.p.logfile_read = self.buffer
+
+    def _read(self):
+        self.buffer.seek(0)
+        return self.buffer.read()
+
+
+class Synchronizer(object):
+    def __init__(self, api):
+        self.api = api
+
+    def log_change(self, message, *args):
+        print("  CHANGE  " + message.format(*args))
+
+    def sync_login(self, password_old, password_new):
+        if self.api.login(password_old):
+            if password_old != password_new:
+                self.log_change("password")
+                self.api.change_password(password_old, password_new)
+        else:
+            if not self.api.login(password_new):
+                raise Exception("neither old or new passwords work")
+
+    def sync_vlans(self, expected):
+        current = self.api.get_current_vlan_config()
+        for id in expected:
+            if id not in current:
+                self.log_change("+ vlan {}", id)
+                self.api.add_vlan(id)
+        for id in current:
+            if id not in expected and id not in API.RESERVED_VLANS:
+                self.log_change("- vlan {}", id)
+                self.api.delete_vlan(id)
+
+    def sync_port_pvids(self, port_pvids, default=1):
+        current = self.api.get_current_port_pvids()
+        for port in sorted(current.keys()):
+            current_pvid = current[port]
+            id = port_pvids.get(port, default)
+            if current_pvid != id:
+                self.log_change("port {} pvid {}", port, id)
+                self.api.set_port_pvid(port, id)
+
+    def sync_membership(self, expected):
+        current = api.get_current_vlan_config()
+        for id in sorted(current.keys()):
+            membership = current[id]
+            for port in sorted(membership.keys()):
+                act = membership[port]
+                exp = expected.get(id, {}).get(port, (False, False))
+                if act != exp:
+                    act_included, act_tagged = act
+                    exp_included, exp_tagged = exp
+                    if exp_included != act_included:
+                        self.log_change(
+                                "{} port {} vlan {} participation",
+                                "+" if exp_included else "-", port, id)
+                        api.set_port_vlan_participation(port, id, exp_included)
+                    if exp_tagged != act_tagged:
+                        self.log_change(
+                                "{} port {} vlan {} tagged traffic",
+                                "+" if exp_tagged else "-", port, id)
+                        api.set_port_vlan_tagging(port, id, exp_tagged)
+
+
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--hostname', type=str)
+parser.add_argument('--password', type=str)
+parser.add_argument('--old-password', type=str, default='password')
+
+parser.add_argument('--pvids', type=int, nargs='+')
+parser.add_argument('--vlan', type=str, nargs='+', action='append', default=[])
+
+parser.add_argument('--trunk-port', type=int, action='append', default=[])
+parser.add_argument('--host-port', type=int, nargs='+', action='append', default=[])
+
+args = parser.parse_args()
+
+hostname = args.hostname
+password_new = args.password
+password_old = args.old_password
+
+trunk_ports = args.trunk_port
+host_ports = dict(args.host_port)
+
+api = API(hostname)
+
+sync = Synchronizer(api)
+sync.sync_login(password_old, password_new)
+sync.sync_vlans(set(host_ports.values()))
+sync.sync_port_pvids(host_ports, 1)
+
+# Pre-poprulate:
+expected_membership = {1: {}}
+for id in host_ports.values():
+    expected_membership[id] = {}
+
+# Trunk ports:
+for port in trunk_ports:
+    # "U" in vlan 1
+    expected_membership[1][port] = (True, False)
+    for id in host_ports.values():
+        # "T" in all other VLANs
+        expected_membership[id][port] = (True, True)
+
+# Host ports:
+for port, id in host_ports.iteritems():
+    # "U" in their own VLAN
+    expected_membership[id][port] = (True, False)
+
+sync.sync_membership(expected_membership)
+
+api.exit()
