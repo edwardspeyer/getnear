@@ -254,8 +254,19 @@ parser.add_argument('--old-password', type=str, default='password')
 parser.add_argument('--pvids', type=int, nargs='+')
 parser.add_argument('--vlan', type=str, nargs='+', action='append', default=[])
 
-parser.add_argument('--trunk-port', type=int, action='append', default=[])
-parser.add_argument('--host-port', type=int, nargs='+', action='append', default=[])
+parser.add_argument(
+        '--trunk-port',
+        type=int,
+        nargs='+',
+        action='append',
+        default=[])
+
+parser.add_argument(
+        '--host-port',
+        type=int,
+        nargs='+',
+        action='append',
+        default=[])
 
 args = parser.parse_args()
 
@@ -263,26 +274,34 @@ hostname = args.hostname
 password_new = args.password
 password_old = args.old_password
 
-trunk_ports = args.trunk_port
+trunk_ports = dict((l[0], l[1:]) for l in args.trunk_port)
 host_ports = dict(args.host_port)
 
-api = API(hostname)
+###
+# Expected VLANS:
+# - All host ports
+# - All VLANs from all trunk ports
+expected_vlans = host_ports.values()
+expected_vlans.extend([n for ns in trunk_ports.values() for n in ns])
+expected_vlans = sorted(set(expected_vlans))
 
-sync = Synchronizer(api)
-sync.sync_login(password_old, password_new)
-sync.sync_vlans(set(host_ports.values()))
-sync.sync_port_pvids(host_ports, 1)
-
-# Pre-poprulate:
+###
+# Expected membership:
 expected_membership = {1: {}}
+for ids in trunk_ports.values():
+    for id in ids:
+        expected_membership[id] = {}
 for id in host_ports.values():
     expected_membership[id] = {}
 
 # Trunk ports:
-for port in trunk_ports:
+for port in sorted(trunk_ports.keys()):
+    ids = trunk_ports[port]
+    # Include the VLAN ids of all the host ports as well, just in case?
+    ids.extend(host_ports.values())
     # "U" in vlan 1
     expected_membership[1][port] = (True, False)
-    for id in host_ports.values():
+    for id in ids:
         # "T" in all other VLANs
         expected_membership[id][port] = (True, True)
 
@@ -291,6 +310,13 @@ for port, id in host_ports.iteritems():
     # "U" in their own VLAN
     expected_membership[id][port] = (True, False)
 
-sync.sync_membership(expected_membership)
 
+###
+# Do the sync
+api = API(hostname)
+sync = Synchronizer(api)
+sync.sync_login(password_old, password_new)
+sync.sync_vlans(expected_vlans)
+sync.sync_port_pvids(host_ports, 1)
+sync.sync_membership(expected_membership)
 api.exit()

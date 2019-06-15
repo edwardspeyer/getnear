@@ -301,11 +301,19 @@ parser.add_argument('--hostname', type=str)
 parser.add_argument('--password', type=str)
 parser.add_argument('--old-password', type=str, default='password')
 
-parser.add_argument('--pvids', type=int, nargs='+')
-parser.add_argument('--vlan', type=str, nargs='+', action='append', default=[])
+parser.add_argument(
+        '--trunk-port',
+        type=int,
+        nargs='+',
+        action='append',
+        default=[])
 
-parser.add_argument('--trunk-port', type=int, action='append', default=[])
-parser.add_argument('--host-port', type=int, nargs='+', action='append', default=[])
+parser.add_argument(
+        '--host-port',
+        type=int,
+        nargs='+',
+        action='append',
+        default=[])
 
 args = parser.parse_args()
 
@@ -322,49 +330,41 @@ actions = Actions(browser)
 # Get number of ports
 num_ports = actions.number_of_ports()
 
-# Baseline
+# Parse args
+trunk_ports = dict((l[0], l[1:]) for l in args.trunk_port)
+host_ports = dict(args.host_port)
+
+# All mentioned VLAN IDs
+vlan_ids = host_ports.values()
+vlan_ids.extend((n for ns in trunk_ports.values() for n in ns))
+vlan_ids = sorted(set(vlan_ids))
+print(vlan_ids)
+
+###
+# Baseline Config
 pvids = [1 for _ in range(0, num_ports)]
-vlans = {
-        1: [PortTypes.UNTAGGED for _ in range(0, num_ports)]
-        }
+all_ports_none = [PortTypes.NONE for _ in range(0, num_ports)]
+memberships = dict((id, all_ports_none[:]) for id in vlan_ids)
+# Default port state is UNTAGGED on VLAN 1
+memberships[1] = [PortTypes.UNTAGGED for _ in range(0, num_ports)]
 
-# If we're given port-pvids, use those instead
-if args.pvids:
-    pvids = args.pvids
-
-# Construct VLAN members from literal command line arguments
-for list in args.vlan:
-    vlan_id = int(list[0])
-    membership = [
-        PortTypes.TAGGED if v == 'T' else
-        PortTypes.UNTAGGED if v == 'U' else
-        PortTypes.NONE
-        for v in list[1:]
-    ]
-    vlans[vlan_id] = membership
-
-# Host port settings take precedence
-for port, vlan in args.host_port:
-    index = port - 1
-    pvids[index] = vlan
-    if vlan not in vlans:
-        vlans[vlan] = [PortTypes.NONE for _ in range(0, num_ports)]
-    vlans[1][index] = PortTypes.NONE
-    vlans[vlan][index] = PortTypes.UNTAGGED
-
-# Trunk port settings take precedence
-for port in args.trunk_port:
+for port, ids in trunk_ports.iteritems():
     index = port - 1
     pvids[index] = 1
-    if 1 not in vlans:
-        vlans[1] = [PortTypes.NONE for _ in range(0, num_ports)]
-    for vlan, membership in vlans.iteritems():
-        membership[index] = PortTypes.TAGGED
+    for id in ids:
+        memberships[id][index] = (
+                PortTypes.UNTAGGED if id ==1 else PortTypes.TAGGED)
+
+for port, id in host_ports.iteritems():
+    index = port - 1
+    pvids[index] = id
+    memberships[id][index] = PortTypes.UNTAGGED
 
 # Print settings
 print(" TODO   pvids {!r}".format(pvids))
-for vlan_id, membership in vlans.iteritems():
-    print(" TODO   vlan {} = {!r}".format(vlan_id, membership))
+for id in sorted(memberships.keys()):
+    membership = memberships[id]
+    print(" TODO   vlan {:4d} = {!r}".format(id, membership))
 
 # Sync all settings
 try:
@@ -391,7 +391,7 @@ try:
     current_vlans = actions.get_vlans()
 
     # Add all VLANs
-    for vlan_id in vlans.keys():
+    for vlan_id in memberships.keys():
         check("presence of VLAN {}".format(vlan_id))
         if vlan_id not in current_vlans:
             change("VLAN {}".format(vlan_id))
@@ -417,7 +417,7 @@ try:
             actions.set_pvid(port_index, pvid_vlan)
 
     # Set membership
-    for vlan_id, membership in vlans.iteritems():
+    for vlan_id, membership in memberships.iteritems():
         check("membership of VLAN {}".format(vlan_id))
         current_membership = actions.get_membership(vlan_id)
         if current_membership != membership:
@@ -427,7 +427,7 @@ try:
 
     # Delete unwanted config from switch:
     for vlan_id in current_vlans:
-        if vlan_id in vlans:
+        if vlan_id in memberships:
             continue
 
         change("delete membership for VLAN {}".format(vlan_id))
