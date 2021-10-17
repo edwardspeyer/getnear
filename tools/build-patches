@@ -1,0 +1,29 @@
+#!/bin/bash
+
+base="/home/egs/Projects/Provisioning and Infrastructure/getnear"
+old="$base/../Infra.old/Provisioning/(old) a.ioiio.io home, May 2019/provisioning/bin"
+
+one_history() {
+  (
+    cd "$old"
+    git log --follow --no-patch --stat \
+      --date=format:'%Y-%m-%dT%H:%M:%S' \
+      --format='%cd %H' \
+      $1 | cat
+  )
+}
+
+all_history() {
+  {
+    one_history netgear-switch-vlans-E-series
+    one_history netgear-switch-vlans-T-series
+  } | sort | uniq | awk '{print $2}'
+}
+
+all_history | while read sha
+do
+  (
+    cd "$old"
+    git format-patch -1 --stdout $sha | cat
+  )
+done
