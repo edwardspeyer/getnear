@@ -1,20 +1,27 @@
 import telnetlib
 import time
+from getnear.logging import info
 
 class TSeries:
-    def __init__(self):
-        self.t = None
-
-    def connect(self, hostname):
-        if self.t:
-            self.t.close()
+    def __init__(self, hostname, password='password', old_password='password', debug=False):
+        info('connecting')
         self.t = telnetlib.Telnet(hostname, 60000)
-
-    def debug(self, v=True):
-        if v:
+        if debug:
             self.t.set_debuglevel(2)
+
+        info('entering admin mode')
+        self.admin_mode()
+        info('logging in')
+        if self.login(password):
+            return
         else:
-            self.t.set_debuglevel(0)
+            info('trying old password')
+            self.admin_mode()
+            if self.login(old_password):
+                info('changing password')
+                self.change_password(old_password, password)
+            else:
+                raise Exception('login failed')
 
     def admin_mode(self):
         self.t.read_until(b'please wait ...')
@@ -27,10 +34,11 @@ class TSeries:
 
         _, _, match = self.t.expect([b'>', b'Applying'])
         if b'Applying' in match:
-            raise Exception('login failed')
+            return False
 
         self.t.write(b'enable\n\n')
         self.t.read_until(b'#')
+        return True
 
     def exit(self):
         # Leave "enable" mode
