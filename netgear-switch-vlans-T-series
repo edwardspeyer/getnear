@@ -2,11 +2,11 @@
 
 import pexpect
 import re
-import StringIO
+from io import StringIO
 import sys
 
 
-class API(object):
+class API:
     RESERVED_VLANS = [1, 2, 3]
 
     def __init__(self, hostname):
@@ -14,7 +14,8 @@ class API(object):
         self.p = pexpect.spawn(
                 'telnet {} 60000'.format(hostname),
                 timeout=2,
-                logfile=log)
+                logfile=log,
+                encoding='utf8')
         self._flush()
 
     def login(self, password):
@@ -178,7 +179,7 @@ class API(object):
                 return
 
     def _flush(self):
-        self.buffer = StringIO.StringIO()
+        self.buffer = StringIO()
         self.p.logfile_read = self.buffer
 
     def _read(self):
@@ -186,7 +187,7 @@ class API(object):
         return self.buffer.read()
 
 
-class Synchronizer(object):
+class Synchronizer:
     def __init__(self, api):
         self.api = api
 
@@ -281,7 +282,7 @@ host_ports = dict(args.host_port)
 # Expected VLANS:
 # - All host ports
 # - All VLANs from all trunk ports
-expected_vlans = host_ports.values()
+expected_vlans = list(host_ports.values())
 expected_vlans.extend([n for ns in trunk_ports.values() for n in ns])
 expected_vlans = sorted(set(expected_vlans))
 
@@ -306,7 +307,7 @@ for port in sorted(trunk_ports.keys()):
         expected_membership[id][port] = (True, True)
 
 # Host ports:
-for port, id in host_ports.iteritems():
+for port, id in host_ports.items():
     # "U" in their own VLAN
     expected_membership[id][port] = (True, False)
 
