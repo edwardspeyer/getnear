@@ -1,0 +1,24 @@
+#!/usr/bin/env python
+
+from getnear.config import parse
+from getnear.config import Tagged as T, Untagged as U, Ignore as _
+from getnear.eseries import ESeries
+from getnear.sync import sync
+import sys
+
+hostname, password = sys.argv[1:]
+
+config = (
+        (1, 2, 3, 4),
+        (1, 1, 12, 34),
+        {
+            1: (T, T, _, _),
+            12: (T, _, U, _),
+            15: (T, T, _, _),
+            35: (T, _, _, U),
+        }
+        )
+
+switch = ESeries(hostname, password)
+
+sync(config, switch)
