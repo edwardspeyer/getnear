@@ -2,15 +2,25 @@ import telnetlib
 import time
 
 class TSeries:
-    def __init__(self, hostname):
+    def __init__(self):
+        self.t = None
+
+    def connect(self, hostname):
+        if self.t:
+            self.t.close()
         self.t = telnetlib.Telnet(hostname, 60000)
 
-    def debug(self):
-        self.t.set_debuglevel(2)
+    def debug(self, v=True):
+        if v:
+            self.t.set_debuglevel(2)
+        else:
+            self.t.set_debuglevel(0)
 
-    def login(self, password):
+    def admin_mode(self):
         self.t.read_until(b'please wait ...')
         self.t.write(b'admin\n')
+
+    def login(self, password):
         self.t.read_until(b'Password:')
         self.t.write(password.encode('ascii'))
         self.t.write(b'\n')
@@ -61,17 +71,19 @@ class TSeries:
     def set_port_pvid(self, port, vlan_id):
         self.do_configure_interface(port, f'vlan pvid {vlan_id}')
     
-    def set_port_vlan_tagging(self, port, vlan_id):
-        self.do_configure_interface(port, f'vlan tagging {vlan_id}')
+    def set_port_vlan_tagging(self, port, vlan_id, is_tagged):
+        if is_tagged:
+            command = f'vlan tagging {vlan_id}'
+        else:
+            command = f'no vlan tagging {vlan_id}'
+        self.do_configure_interface(port, command)
 
-    def delete_port_vlan_tagging(self, port, vlan_id):
-        self.do_configure_interface(port, f'no vlan tagging {vlan_id}')
-
-    def set_port_vlan_participation(self, port, vlan_id):
-        self.do_configure_interface(port, f'vlan participation include {vlan_id}')
-
-    def delete_port_vlan_participation(self, port, vlan_id):
-        self.do_configure_interface(port, f'vlan participation exclude {vlan_id}')
+    def set_port_vlan_participation(self, port, vlan_id, is_included):
+        if is_included:
+            command = f'vlan participation include {vlan_id}'
+        else:
+            command = f'vlan participation exclude {vlan_id}'
+        self.do_configure_interface(port, command)
 
     def add_vlan(self, vlan_id):
         self.do_vlan_database(f'vlan {vlan_id}')
