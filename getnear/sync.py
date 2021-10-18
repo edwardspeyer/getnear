@@ -14,9 +14,14 @@ def sync(config, switch):
         switch.set_port_pvid(port, pvid)
 
     for vlan_id, membership in vlans.items():
+        info(f'vlan {vlan_id}')
         for port, status in zip(ports, membership):
             if status == Ignore:
+                info(f'  port {port} off')
                 switch.set_port_vlan_participation(port, vlan_id, False)
             else:
+                is_tagged = status == Tagged
+                symbol = 'T' if is_tagged else 'U'
+                info(f'  port {port} {symbol}')
                 switch.set_port_vlan_participation(port, vlan_id, True)
-                switch.set_port_vlan_tagging(port, vlan_id, status == Tagged)
+                switch.set_port_vlan_tagging(port, vlan_id, is_tagged)

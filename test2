@@ -8,7 +8,7 @@ import sys
 hostname, password = sys.argv[1:]
 
 config = parse('''
-        ports   05 06 07 08
+        ports   01 02 03 04
         pvids   01 01 12 35
         vlan 01  T  T  _  _
         vlan 12  T  _  U  _
