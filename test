@@ -1,0 +1,29 @@
+#!/usr/bin/env python
+
+from getnear.tseries import TSeries
+import sys
+
+hostname, password = sys.argv[1:3]
+
+t = TSeries(hostname)
+t.login(password)
+
+#t.add_vlan(87)
+#t.set_port_vlan_participation(7, 87)
+#t.t.set_debuglevel(1)
+t.delete_port_vlan_tagging(7, 87)
+
+print(list(t.get_vlan(87)))
+
+#t.t.set_debuglevel(0)
+
+for vlan_id in t.get_vlan_ids():
+    print(vlan_id)
+    for port, (included, tagged) in t.get_vlan(vlan_id):
+        if included:
+            print('  ', port, tagged)
+
+for port, pvids in t.get_port_pvids():
+    print(port, pvids)
+
+t.exit()
