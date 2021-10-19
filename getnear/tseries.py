@@ -161,3 +161,6 @@ class TSeries:
             else:
                 break
         return result
+
+    def sync(self, config):
+        pass

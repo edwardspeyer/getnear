@@ -2,32 +2,26 @@ Tagged = 'T'
 Untagged = 'U'
 Ignore = '_'
 
-def parse(tokens):
-    groups = []
-    cur = None
+Trunk = 'Trunk'
+Unused = 'Unused'
 
-    for token in tokens:
-        if token in {'ports', 'pvids', 'vlan'}:
-            cur = []
-            groups.append(cur)
-        cur.append(token)
 
-    vlans = {}
-    for group in groups:
-        if group[0] == 'ports':
-            ports = list(map(int, group[1:]))
-        if group[0] == 'pvids':
-            pvids = list(map(int, group[1:]))
-        if group[0] == 'vlan':
-            vlan_id_s, *membership = group[1:]
-            vlan_id = int(vlan_id_s)
-            for member in membership:
-                assert member in {'T', 'U', '_'}
-            vlans[vlan_id] = membership
+def simple(*tokens):
+    ports = tuple(range(1, len(tokens) + 1))
+    pvids = tuple(1 if t in {Trunk, Unused} else t for t in tokens)
 
-    assert len(ports) == len(pvids)
-    for membership in vlans.values():
-        assert len(ports) == len(membership)
+    empty = list(Ignore for _ in ports)
+    vlans = dict((vlan, empty[:]) for vlan in pvids)
+    vlans[1] = empty[:]
+
+    for index, token in enumerate(tokens):
+        if token is Trunk:
+            for vlan in vlans:
+                vlans[vlan][index] = Tagged
+        elif token is Unused:
+            vlans[1][index] = Untagged
+        else:
+            vlans[token][index] = Untagged
 
     config = (ports, pvids, vlans)
     return validate(config)
@@ -43,19 +37,7 @@ def validate(config):
         state = dict(zip(ports, membership))[port]
         if state == Ignore:
             raise Exception(
-                    f'port {port} is in pvid {pvid} '
-                    f'but is not a member of the same vlan: {membership}')
+                f'port {port} is in pvid {pvid} '
+                f'but is not a member of the same vlan: '
+                f'{membership}')
     return config
-
-
-if __name__ == '__main__':
-    Example = '''
-    ports   01 02 03 04 05 06 07 08
-    pvids   01 15 12 35 01 01 01 01
-    vlan 01  T  T  _  _  U  _  _  _
-    vlan 12  T  _  U  _  U  _  _  _
-    vlan 15  T  T  _  _  U  _  _  _
-    vlan 35  T  _  _  U  U  U  U  U
-    '''
-
-    parse(Example.split())
