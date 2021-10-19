@@ -29,7 +29,23 @@ def parse(tokens):
     for membership in vlans.values():
         assert len(ports) == len(membership)
 
-    return (ports, pvids, vlans)
+    config = (ports, pvids, vlans)
+    return validate(config)
+
+
+def validate(config):
+    ports, pvids, vlans = config
+    # If a port is in a pvid, it must be a member of that vlan too
+    for port, pvid in zip(ports, pvids):
+        if pvid not in vlans:
+            raise
+        membership = vlans[pvid]
+        state = dict(zip(ports, membership))[port]
+        if state == Ignore:
+            raise Exception(
+                    f'port {port} is in pvid {pvid} '
+                    f'but is not a member of the same vlan: {membership}')
+    return config
 
 
 if __name__ == '__main__':

@@ -1,6 +1,7 @@
 import requests
 from lxml import etree
 import logging
+from getnear.logging import info
 from getnear import config
 
 logging.getLogger('urllib3').setLevel(logging.WARNING)
@@ -65,14 +66,7 @@ class ESeries:
             'hash':         hash,
             'ACTION':       'Add',
             }
-        try:
-            v = self.post(VLAN_CONFIG, params)
-        except Exception as ex:
-            if 'Duplicated VLAN ID not allowed!' in str(ex):
-                # Idempotency is not an exception :P
-                pass
-            else:
-                raise
+        self.post(VLAN_CONFIG, params)
 
     def delete_vlan(self, vlan_id):
         html = self.get(VLAN_CONFIG)
@@ -138,15 +132,6 @@ class ESeries:
                 }
         html = self.post(PORT_PVID, params)
 
-    def set_membership(self, vlan_id):
-        pass
-
-    def set_port_vlan_participation(self, port, vlan_id, is_included):
-        pass
-
-    def set_port_vlan_tagging(self, port, vlan_id, is_tagged):
-        pass
-
     def get_vlan_ids(self):
         html = self.get(VLAN_CONFIG)
         for input in etree.HTML(html).xpath('//input'):
@@ -163,3 +148,37 @@ class ESeries:
         html = self.get(VLAN_CONFIG)
         hash = etree.HTML(html).xpath('//input[@name="hash"]/@value')[0]
         self.post(VLAN_CONFIG, {'status': 'Enable', 'hash': hash})
+
+    def sync(self, config):
+        ports, pvids, vlans = config
+
+        self.enable_vlans()
+        todo = set(pvids) | set(vlans)
+        done = set(self.get_vlan_ids())
+        info(f'all vlan ids {sorted(todo)}')
+        for vlan_id in todo - done:
+            info(f'adding new vlan {vlan_id}')
+            self.add_vlan(vlan_id)
+
+        for port, pvid in zip(ports, pvids):
+            # To change a port's PVID it must be a member first
+            i = ports.index(port)
+            membership = vlans[pvid]
+            state = membership[i]
+            current_membership = list(self.get_port_vlan_membership(pvid))
+            updated_membership = current_membership[:]
+            updated_membership[i] = membership[i]
+            if updated_membership != current_membership:
+                info(
+                        f'updating membership for vlan {pvid} '
+                        f'prior to changing port {port} pvid to {pvid}')
+                self.set_port_vlan_membership(pvid, updated_membership)
+
+            # Now we can change the port PVIDs
+            info(f'setting port {port} to pvid {pvid}')
+            self.set_port_pvid(port, pvid)
+
+        # Now fix up all the memberships
+        for vlan_id, membership in vlans.items():
+            info(f'setting port membership for vlan {vlan_id}')
+            self.set_port_vlan_membership(vlan_id, membership)
