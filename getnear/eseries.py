@@ -18,7 +18,7 @@ CODES = {
 
 
 class ESeries:
-    def __init__(self, hostname, password, old_password='password'):
+    def __init__(self, hostname, password, old_password='password', debug=False):
         self.session = requests.session()
         self.hostname = hostname
         self.login(password, old_password)

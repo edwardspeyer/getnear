@@ -1,6 +1,7 @@
-import telnetlib
-import time
+from getnear.config import Tagged, Ignore
 from getnear.logging import info
+import telnetlib
+
 
 class TSeries:
     def __init__(self, hostname, password='password', old_password='password', debug=False):
@@ -163,4 +164,26 @@ class TSeries:
         return result
 
     def sync(self, config):
-        pass
+        ports, pvids, vlans = config
+
+        vlan_ids = set(pvids) | set(vlans)
+        for vlan_id in sorted(vlan_ids):
+            info(f'adding vlan {vlan_id}')
+            self.add_vlan(vlan_id)
+
+        for port, pvid in zip(ports, pvids):
+            info(f'setting port {port} to PVID {pvid}')
+            self.set_port_pvid(port, pvid)
+
+        for vlan_id, membership in vlans.items():
+            info(f'vlan {vlan_id}')
+            for port, status in zip(ports, membership):
+                if status == Ignore:
+                    info(f'  port {port} off')
+                    self.set_port_vlan_participation(port, vlan_id, False)
+                else:
+                    is_tagged = status == Tagged
+                    symbol = 'T' if is_tagged else 'U'
+                    info(f'  port {port} {symbol}')
+                    self.set_port_vlan_participation(port, vlan_id, True)
+                    self.set_port_vlan_tagging(port, vlan_id, is_tagged)
