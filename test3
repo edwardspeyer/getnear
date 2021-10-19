@@ -9,10 +9,10 @@ import sys
 hostname, password = sys.argv[1:]
 
 config = (
-        (1, 2, 3, 4),
-        (1, 1, 12, 34),
+        ( 1,  2,  3,  4),
+        ( 1,  1, 12, 34),
         {
-            1: (T, T, _, _),
+             1: (T, T, _, _),
             12: (T, _, U, _),
             15: (T, T, _, _),
             35: (T, _, _, U),
@@ -21,4 +21,26 @@ config = (
 
 switch = ESeries(hostname, password)
 
-sync(config, switch)
+switch.enable_vlans()
+switch.add_vlan(14)
+switch.add_vlan(12)
+
+#                                  # 1  2  3  4  5  6  7  8
+switch.set_port_vlan_membership( 1, (U, U, U, U, _, _, _, T))
+switch.set_port_vlan_membership(12, (_, _, _, _, _, U, U, T))
+switch.set_port_vlan_membership(14, (_, _, _, _, U, _, _, T))
+switch.set_port_pvid(1,  1)
+switch.set_port_pvid(2,  1)
+switch.set_port_pvid(3,  1)
+switch.set_port_pvid(4,  1)
+switch.set_port_pvid(5, 14)
+switch.set_port_pvid(6, 12)
+switch.set_port_pvid(7, 12)
+switch.set_port_pvid(8,  1)
+
+#sync(config, switch)
+
+# 8: trunk
+# 7: xbox 10.3.14.6
+# 6: ps4 10.3.14.57
+# 5: tvonthewall 10.3.12.24
