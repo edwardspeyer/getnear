@@ -1,8 +1,9 @@
-import requests
+from getnear import config
+from getnear.logging import info
 from lxml import etree
 import logging
-from getnear.logging import info
-from getnear import config
+import re
+import requests
 
 logging.getLogger('urllib3').setLevel(logging.WARNING)
 
@@ -16,11 +17,24 @@ CODES = {
         '1': config.Untagged,
         }
 
+def connect(hostname, *args, **kwargs):
+    url = f'http://{hostname}/login.cgi'
+    html = requests.get(url).text
+    doc = etree.HTML(html)
+    for info in doc.xpath('//div[@class = "switchInfo"]'):
+        md = re.match('GS\d+Ev(\d)', info.text)
+        if not md:
+            return
+        version = int(md.groups()[0])
+        kwargs['version'] = version
+        return ESeries(hostname, *args, **kwargs)
+
 
 class ESeries:
-    def __init__(self, hostname, password, old_password='password', debug=False):
+    def __init__(self, hostname, password, old_password='password', debug=False, version=3):
         self.session = requests.session()
         self.hostname = hostname
+        self.version = version
         self.login(password, old_password)
 
     def __del__(self):
@@ -69,6 +83,9 @@ class ESeries:
         self.post(VLAN_CONFIG, params)
 
     def delete_vlan(self, vlan_id):
+        # The old version of this method said that claimed that an empty
+        # `hiddVlan` parameter was needed due to "another v2 (GS108) quirk".
+        # That seems to work fine for GS108Ev3 as well.
         html = self.get(VLAN_CONFIG)
         doc = etree.HTML(html)
         hash = doc.xpath('//input[@name="hash"]/@value')[0]
@@ -88,15 +105,30 @@ class ESeries:
         self.post(VLAN_CONFIG, params)
 
     def get_port_vlan_membership(self, vlan_id):
+        # The older version of this method said that, as "a quirk of firmware
+        # v2 (on GS108v3)", fetching another vlan membership would only work if
+        # you submit the current vlan data using `hiddenMem` and `VLAN_ID_HD`.
+        #
+        # It doesn't look like that's the case any more.
         html = self.get(VLAN_MEMBERS)
         doc = etree.HTML(html)
-        hash = doc.xpath('//input[@name="hash"]/@value')[0]
-        params = {
-                'VLAN_ID': str(vlan_id),
-                'hash': hash,
-                }
-        html = self.post(VLAN_MEMBERS, params)
-        doc = etree.HTML(html)
+
+        currently_shown_vlan_id = int(doc.xpath(
+                '//select[@id = "vlanIdOption"]'
+                '/option[@selected]'
+                '/@value')[0])
+
+        # By default, the VLAN_MEMBERS page loads with the members for one of
+        # the vlans, usually 1.  If it doesn't we have to reload the page:
+        if vlan_id != currently_shown_vlan_id:
+            hash = doc.xpath('//input[@name="hash"]/@value')[0]
+            params = {
+                    'VLAN_ID': str(vlan_id),
+                    'hash': hash,
+                    }
+            html = self.post(VLAN_MEMBERS, params)
+            doc = etree.HTML(html)
+
         code = doc.xpath('//input[@name = "hiddenMem"]/@value')[0]
         return tuple(CODES[c] for c in code)
 
@@ -125,8 +157,16 @@ class ESeries:
         html = self.get(PORT_PVID)
         doc = etree.HTML(html)
         hash = doc.xpath('//input[@name="hash"]/@value')[0]
+
+        if self.version <= 2:
+            # Quirk fix: the GS105Ev2 the port parameter is named (port0,
+            # port1, ...), but on the GS108Ev3 they are (port1, port2, ...).
+            # The previous guess was that this is a v2 specific thing.
+            port_index = port - 1
+        else:
+            port_index = port
         params = {
-                f'port{port}': 'checked',
+                f'port{port_index}': 'checked',
                 'pvid': vlan_id,
                 'hash': hash,
                 }
@@ -161,6 +201,7 @@ class ESeries:
             self.add_vlan(vlan_id)
 
         for port, pvid in zip(ports, pvids):
+            info(f'setting port pvid for {port} to {pvid}')
             # To change a port's PVID it must be a member first
             i = ports.index(port)
             membership = vlans[pvid]
@@ -168,6 +209,8 @@ class ESeries:
             current_membership = list(self.get_port_vlan_membership(pvid))
             updated_membership = current_membership[:]
             updated_membership[i] = membership[i]
+            info(f'vlan {pvid} current membership: {current_membership}')
+            info(f'vlan {pvid} updated membership: {updated_membership}')
             if updated_membership != current_membership:
                 info(
                         f'updating membership for vlan {pvid} '

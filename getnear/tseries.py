@@ -1,6 +1,18 @@
 from getnear.config import Tagged, Ignore
 from getnear.logging import info
+from lxml import etree
+import re
+import requests
 import telnetlib
+
+
+def connect(hostname, *args, **kwargs):
+    url = f'http://{hostname}/'
+    html = requests.get(url).text
+    doc = etree.HTML(html)
+    for title in doc.xpath('//title'):
+        if re.match('NETGEAR GS\d+T', title.text):
+            return TSeries(hostname, *args, **kwargs)
 
 
 class TSeries:
