@@ -1,8 +1,9 @@
 # getnear
 
-* Easily add VLANs to consumer grade ethernet switches
+* Manage a wide variety of consumer grade ethernet switches, with ease!
   * NetGear E-Series: supported!
   * NetGear T-Series: also supported!
+* Easily add new VLANs, configure port PVIDs, and curate VLAN membership
 * Accidentally disable important devices used by your whole family
 * Put off important tasks by fiddling with your "home lab" instead
 
