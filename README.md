@@ -1,4 +1,4 @@
-# getnear – 
+# getnear
 
 * Easily add VLANs to consumer grade ethernet switches
   * NetGear E-Series: supported!
