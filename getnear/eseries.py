@@ -10,12 +10,13 @@ logging.getLogger('urllib3').setLevel(logging.WARNING)
 VLAN_CONFIG = '/8021qCf.cgi'
 VLAN_MEMBERS = '/8021qMembe.cgi'
 PORT_PVID = '/portPVID.cgi'
-    
+
 CODES = {
-        '3': config.Ignore,
-        '2': config.Tagged,
-        '1': config.Untagged,
-        }
+    '3': config.Ignore,
+    '2': config.Tagged,
+    '1': config.Untagged,
+}
+
 
 def connect(hostname, *args, **kwargs):
     url = f'http://{hostname}/login.cgi'
@@ -60,7 +61,8 @@ class ESeries:
 
     def rethrow_error_message(self, html):
         doc = etree.HTML(html)
-        errors = list(filter(len, doc.xpath('//input[@id = "err_msg"]/@value')))
+        errors = list(filter(len, doc.xpath(
+            '//input[@id = "err_msg"]/@value')))
         if errors:
             raise Exception('; '.join(errors))
 
@@ -79,7 +81,7 @@ class ESeries:
             'vlanNum':      vlan_num,
             'hash':         hash,
             'ACTION':       'Add',
-            }
+        }
         self.post(VLAN_CONFIG, params)
 
     def delete_vlan(self, vlan_id):
@@ -91,17 +93,17 @@ class ESeries:
         hash = doc.xpath('//input[@name="hash"]/@value')[0]
         vlan_num = doc.xpath('//input[@name="vlanNum"]/@value')[0]
         vlanck = doc.xpath(
-                f'//input[@value = {vlan_id} and '
-                'starts-with(@name, "vlanck")]/@name')[0]
+            f'//input[@value = {vlan_id} and '
+            'starts-with(@name, "vlanck")]/@name')[0]
         params = {
-                'status':       'Enable',
-                'hiddVlan':     '',
-                'ADD_VLANID':   '',
-                vlanck:         str(vlan_id),
-                'vlanNum':      vlan_num,
-                'hash':         hash,
-                'ACTION':       'Delete',
-                }
+            'status':       'Enable',
+            'hiddVlan':     '',
+            'ADD_VLANID':   '',
+            vlanck:         str(vlan_id),
+            'vlanNum':      vlan_num,
+            'hash':         hash,
+            'ACTION':       'Delete',
+        }
         self.post(VLAN_CONFIG, params)
 
     def get_port_vlan_membership(self, vlan_id):
@@ -114,18 +116,18 @@ class ESeries:
         doc = etree.HTML(html)
 
         currently_shown_vlan_id = int(doc.xpath(
-                '//select[@id = "vlanIdOption"]'
-                '/option[@selected]'
-                '/@value')[0])
+            '//select[@id = "vlanIdOption"]'
+            '/option[@selected]'
+            '/@value')[0])
 
         # By default, the VLAN_MEMBERS page loads with the members for one of
         # the vlans, usually 1.  If it doesn't we have to reload the page:
         if vlan_id != currently_shown_vlan_id:
             hash = doc.xpath('//input[@name="hash"]/@value')[0]
             params = {
-                    'VLAN_ID': str(vlan_id),
-                    'hash': hash,
-                    }
+                'VLAN_ID': str(vlan_id),
+                'hash': hash,
+            }
             html = self.post(VLAN_MEMBERS, params)
             doc = etree.HTML(html)
 
@@ -139,13 +141,13 @@ class ESeries:
         chars = dict((v, k) for k, v in CODES.items())
         code = ''.join(chars[m] for m in membership)
         params = {
-                'VLAN_ID': str(vlan_id),
-                'VLAN_ID_HD': str(vlan_id),
-                'hash': hash,
-                'hiddenMem': code,
-                }
+            'VLAN_ID': str(vlan_id),
+            'VLAN_ID_HD': str(vlan_id),
+            'hash': hash,
+            'hiddenMem': code,
+        }
         html = self.post(VLAN_MEMBERS, params)
-    
+
     def get_port_pvid(self, port_index):
         self.browser.get(Actions.PORT_PVID)
         html = self.browser.page.html
@@ -166,10 +168,10 @@ class ESeries:
         else:
             port_index = port
         params = {
-                f'port{port_index}': 'checked',
-                'pvid': vlan_id,
-                'hash': hash,
-                }
+            f'port{port_index}': 'checked',
+            'pvid': vlan_id,
+            'hash': hash,
+        }
         html = self.post(PORT_PVID, params)
 
     def get_vlan_ids(self):
@@ -181,7 +183,8 @@ class ESeries:
 
     def is_vlans_enabled(self):
         html = self.get(VLAN_CONFIG)
-        elements = etree.HTML(html).xpath('//input[@name="status" and @checked]')
+        elements = etree.HTML(html).xpath(
+            '//input[@name="status" and @checked]')
         return bool(elements)
 
     def enable_vlans(self):
@@ -213,8 +216,8 @@ class ESeries:
             info(f'vlan {pvid} updated membership: {updated_membership}')
             if updated_membership != current_membership:
                 info(
-                        f'updating membership for vlan {pvid} '
-                        f'prior to changing port {port} pvid to {pvid}')
+                    f'updating membership for vlan {pvid} '
+                    f'prior to changing port {port} pvid to {pvid}')
                 self.set_port_vlan_membership(pvid, updated_membership)
 
             # Now we can change the port PVIDs

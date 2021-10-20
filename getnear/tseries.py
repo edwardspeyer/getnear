@@ -91,7 +91,7 @@ class TSeries:
 
     def set_port_pvid(self, port, vlan_id):
         self.do_configure_interface(port, f'vlan pvid {vlan_id}')
-    
+
     def set_port_vlan_tagging(self, port, vlan_id, is_tagged):
         if is_tagged:
             command = f'vlan tagging {vlan_id}'
@@ -111,7 +111,7 @@ class TSeries:
 
     def delete_vlan(self, vlan_id):
         self.do_vlan_database(f'no vlan {vlan_id}')
-    
+
     def do_configure_interface(self, port, command):
         self.t.write(b'configure\n')
         self.t.read_until(b'#')
@@ -147,7 +147,7 @@ class TSeries:
         self.t.read_until(b'Confirm new password:')
         self.t.write((password_new + '\n').encode())
         self.t.read_until(b'Password Changed!')
-        self.t.write(b'enable\n') # Double newline
+        self.t.write(b'enable\n')  # Double newline
         self.t.read_until(b'#')
 
     def paged_table_body(self):
@@ -167,7 +167,7 @@ class TSeries:
             index, _, output = self.t.expect([
                 b'--More-- or \(q\)uit',
                 b'#'
-                ])
+            ])
             result += output
             if index == 0:
                 self.t.write(b'\n')

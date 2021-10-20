@@ -1,6 +1,7 @@
 from getnear.logging import info
 from getnear.config import Tagged, Untagged, Ignore
 
+
 def sync(config, switch):
     ports, pvids, vlans = config
 
