@@ -32,7 +32,7 @@ def connect(hostname, *args, **kwargs):
 
 
 class ESeries:
-    def __init__(self, hostname, password, old_password='password', debug=False, version=3):
+    def __init__(self, hostname, password='password', old_password='password', debug=False, version=3):
         self.session = requests.session()
         self.hostname = hostname
         self.version = version
