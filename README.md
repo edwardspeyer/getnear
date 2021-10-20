@@ -17,22 +17,22 @@ Rostelecom_Trusted = 14
 Huawei_Trusted = 15
 
 connect('switch01.example.com').sync(simple(
-    Trunk,              # ^upstream
-    Trunk,              # switch02
-    Unused,
-    Trunk,              # switch03
-    Trunk,              # switch03
-    Huawei_Trusted,     # cat monitor: kitchen
-    Rostelecom_Trusted, # smart fridge
-    Rostelecom_Trusted, # cat monitor: guest bedroom
+    Trunk,              # port1: ^upstream
+    Trunk,              # port2: switch02
+    Unused,             # port3:
+    Trunk,              # port4: switch03
+    Trunk,              # port5: switch03
+    Huawei_Trusted,     # port6: cat monitor: kitchen
+    Rostelecom_Trusted, # port7: smart fridge
+    Rostelecom_Trusted, # port8: cat monitor: guest bedroom
     ))
 
 connect('switch02.example.com').sync(simple(
-    Trunk,              # ^upstream
-    My_Stuff_Trusted,   # Windows PC
-    My_Stuff_Trusted,   # Windows PC
-    Unused,
-    Rostelecom_Trusted, # smart TV w/ microphone
+    Trunk,              # port1: ^upstream
+    My_Stuff_Trusted,   # port2: Windows PC
+    My_Stuff_Trusted,   # port3: Windows PC
+    Unused,             # port4: 
+    Rostelecom_Trusted, # port5: smart TV w/ microphone
     ))
 
 # ...etc
