@@ -1,5 +1,6 @@
 import optparse
 from functools import reduce
+from getnear import checkpoint
 from getnear.config import validate, Tagged, Untagged, Ignore
 from getnear.format import format_config
 from getnear.switch import connect
@@ -11,6 +12,7 @@ def main(args=None):
     parser.add_option('--hostname', metavar='HOSTNAME')
     parser.add_option('--password', metavar='PASSWORD', default='password')
     parser.add_option('--commit', action='store_true')
+    parser.add_option('--lazy', action='store_true')
 
     options, args = parser.parse_args(args)
 
@@ -25,9 +27,15 @@ def main(args=None):
     print(format_config(options.hostname, config))
 
     if options.commit:
-        connect(
-                options.hostname,
-                password=options.password).sync(config)
+        time = checkpoint.is_unchanged(options.hostname, config)
+        if options.lazy and time:
+            print(f'no change since {time}, remove --lazy to force a commit')
+            return
+        else:
+            connect(
+                    options.hostname,
+                    password=options.password).sync(config)
+            checkpoint.update(options.hostname, config)
     else:
         print('use --commit to commit changes')
 
