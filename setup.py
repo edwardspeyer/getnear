@@ -2,7 +2,7 @@ import setuptools
 
 setuptools.setup(
         name='getnear',
-        version='20020906',
+        version='20020907',
         author='Edward Speyer',
         author_email='getnear@ed.wtf',
         install_requires=['requests', 'tabulate'],
