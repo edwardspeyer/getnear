@@ -9,32 +9,27 @@
 
 ## Example
 
-```Python
-from getnear.switch import connect
-from getnear.config import simple, Trunk, Unused
+```shell
+$ getnear --hostname switch01.example.com \
+> port 1 trunk 12,14,15 : upstream  \
+> port 2 trunk 12,14,15 : switch02  \
+> port 3 access 1       : unused    \
+> port 4 trunk 12,14,15 : switch03  \
+> port 5 trunk 12,14,15 : switch04  \
+> port 6 access 15      : Huawei cat monitor \
+> port 7 access 14      : Rostelecom smart fridge \
+> port 8 access 14      : Rostelecom cat monitor
+switch01.example.com:
 
-My_Stuff_Trusted = 12
-Rostelecom_Trusted = 14
-Huawei_Trusted = 15
-
-connect('switch01.example.com').sync(simple(
-    Trunk,              # port1: ^upstream
-    Trunk,              # port2: switch02
-    Unused,             # port3:
-    Trunk,              # port4: switch03
-    Trunk,              # port5: switch03
-    Huawei_Trusted,     # port6: cat monitor: kitchen
-    Rostelecom_Trusted, # port7: smart fridge
-    Rostelecom_Trusted, # port8: cat monitor: guest bedroom
-    ))
-
-connect('switch02.example.com').sync(simple(
-    Trunk,              # port1: ^upstream
-    My_Stuff_Trusted,   # port2: Windows PC
-    My_Stuff_Trusted,   # port3: Windows PC
-    Unused,             # port4: 
-    Rostelecom_Trusted, # port5: smart TV w/ microphone
-    ))
-
-# ...etc
+      PORT    PVID  1    12    14    15
+    ------  ------  ---  ----  ----  ----
+         1       1  U    T     T     T
+         2       1  U    T     T     T
+         3       1  U    _     _     _
+         4       1  U    T     T     T
+         5       1  U    T     T     T
+         6      15  _    _     _     U
+         7      14  _    _     U     _
+         8      14  _    _     U     _
+use --commit to commit changes
 ```

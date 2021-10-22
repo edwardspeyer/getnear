@@ -1,0 +1,5 @@
+#!/usr/bin/env python3
+
+from getnear.cli import main
+
+main()
