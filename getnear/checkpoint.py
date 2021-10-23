@@ -1,10 +1,10 @@
 from pathlib import Path
 import sqlite3
 import hashlib
-import xdg
+import xdg.BaseDirectory
 
 directory = Path(xdg.BaseDirectory.xdg_cache_home) / 'getnear'
-directory.mkdir(exist_ok=True)
+directory.mkdir(parents=True, exist_ok=True)
 db = sqlite3.connect(directory / 'checkpoint.sqlite')
 db.execute('''
     create table if not exists checkpoint(
