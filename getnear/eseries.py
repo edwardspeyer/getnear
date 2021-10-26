@@ -139,8 +139,7 @@ class ESeries:
         return tuple(CODES[c] for c in code)
 
     def set_port_vlan_membership(self, vlan_id, membership):
-        html = self.get(VLAN_MEMBERS)
-        doc = etree.HTML(html)
+        doc = self._get_port_vlan_membership_page(vlan_id)
         hash = doc.xpath('//input[@name="hash"]/@value')[0]
         chars = dict((v, k) for k, v in CODES.items())
         code = ''.join(chars[m] for m in membership)
