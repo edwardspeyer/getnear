@@ -106,7 +106,7 @@ class ESeries:
         }
         self.post(VLAN_CONFIG, params)
 
-    def get_port_vlan_membership(self, vlan_id):
+    def _get_port_vlan_membership_page(self, vlan_id):
         # The older version of this method said that, as "a quirk of firmware
         # v2 (on GS108v3)", fetching another vlan membership would only work if
         # you submit the current vlan data using `hiddenMem` and `VLAN_ID_HD`.
@@ -131,6 +131,10 @@ class ESeries:
             html = self.post(VLAN_MEMBERS, params)
             doc = etree.HTML(html)
 
+        return doc
+
+    def get_port_vlan_membership(self, vlan_id):
+        doc = self._get_port_vlan_membership_page(vlan_id)
         code = doc.xpath('//input[@name = "hiddenMem"]/@value')[0]
         return tuple(CODES[c] for c in code)
 
