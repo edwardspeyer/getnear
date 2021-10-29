@@ -5,6 +5,12 @@ from getnear.config import validate, Tagged, Untagged, Ignore
 from getnear.format import format_config
 from getnear.switch import connect
 
+Port = 'port'
+Access = 'access'
+Trunk = 'trunk'
+Comment = ':'
+Commands = {Port, Access, Trunk, Comment}
+
 
 def main(args=None):
     parser = optparse.OptionParser()
@@ -44,6 +50,20 @@ def main(args=None):
         print('use --commit to commit changes')
 
 
+def match(token, words):
+    matches = words
+    for i, l in enumerate(token):
+        matches = set(w for w in matches if len(w) > i and w[i] == l)
+    if len(matches) == 0:
+        raise Exception(
+                f'token {token} did not match any of {words}')
+    if len(matches) > 1:
+        raise Exception(
+                f'token {token} matched more than one '
+                f'of {words}: {matches}')
+    return list(matches)[0]
+
+
 def parse(tokens):
     tokens = tokens[:]
 
@@ -53,23 +73,26 @@ def parse(tokens):
 
     while tokens:
         token = tokens.pop(0)
+        command = match(token, Commands)
         if token is None:
             break
-        elif token == 'port':
+        elif command == Port:
             port = int(tokens.pop(0))
-        elif token == 'access':
+        elif command == Access:
             vlan = int(tokens.pop(0))
             access_ports[port] = vlan
-        elif token == 'trunk':
+        elif command == Trunk:
             vlans = set(expand(tokens.pop(0)))
             trunk_ports[port] = vlans
-        elif token == ':':
+        elif command == Comment:
             while tokens:
-                if tokens[0] == 'port':
-                    break
-                tokens.pop(0)
-        else:
-            raise Exception(f'unrecognized token: {token}')
+                try:
+                    command = match(tokens[0], Commands)
+                    if command == Port:
+                        break
+                    tokens.pop(0)
+                except:
+                    tokens.pop(0)
 
     # Default for trunk ports is vlan 1, unless explicitly said otherwise.
     for port in trunk_ports:
