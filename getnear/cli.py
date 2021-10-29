@@ -12,7 +12,9 @@ def main(args=None):
     parser.add_option('--hostname', metavar='HOSTNAME')
     parser.add_option('--password', metavar='PASSWORD', default='password')
     parser.add_option('--commit', action='store_true')
+    parser.add_option('--no-commit', action='store_false', dest='commit')
     parser.add_option('--lazy', action='store_true')
+    parser.add_option('--no-lazy', action='store_false', dest='lazy')
 
     options, args = parser.parse_args(args)
 
@@ -25,17 +27,19 @@ def main(args=None):
     config = parse(args)
 
     print(format_config(options.hostname, config))
+    time = checkpoint.is_unchanged(options.hostname, config)
+
+    if time:
+        print(f'config unchanged since {time}')
+        if options.lazy:
+            print(f'skipping unchanged config due to --lazy')
+            return
 
     if options.commit:
-        time = checkpoint.is_unchanged(options.hostname, config)
-        if options.lazy and time:
-            print(f'no change since {time}, remove --lazy to force a commit')
-            return
-        else:
-            connect(
-                    options.hostname,
-                    password=options.password).sync(config)
-            checkpoint.update(options.hostname, config)
+        connect(
+                options.hostname,
+                password=options.password).sync(config)
+        checkpoint.update(options.hostname, config)
     else:
         print('use --commit to commit changes')
 
