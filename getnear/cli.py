@@ -59,7 +59,6 @@ def parse(tokens):
         elif token == 'trunk':
             vlans = set(expand(tokens.pop(0)))
             trunk_ports[port] = vlans
-            access_ports[port] = 1
         elif token == ':':
             while tokens:
                 if tokens[0] == 'port':
@@ -67,6 +66,11 @@ def parse(tokens):
                 tokens.pop(0)
         else:
             raise Exception(f'unrecognized token: {token}')
+
+    # Default for trunk ports is vlan 1, unless explicitly said otherwise.
+    for port in trunk_ports:
+        if port not in access_ports:
+            access_ports[port] = 1
 
     ports = tuple(sorted(set(access_ports) | set(trunk_ports)))
     pvids = tuple(access_ports[p] for p in ports)
