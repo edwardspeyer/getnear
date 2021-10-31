@@ -69,6 +69,9 @@ class ESeries:
     def logout(self):
         self.get('/logout.cgi')
 
+    def get_current_config(self):
+        pass
+
     def add_vlan(self, vlan_id):
         html = self.get(VLAN_CONFIG)
         doc = etree.HTML(html)

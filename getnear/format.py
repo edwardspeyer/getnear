@@ -1,8 +1,7 @@
 import tabulate
 
-def format_config(hostname, config):
+def format_config(config):
     buf = []
-    buf.append(f'{hostname}:\n\n')
     ports, pvids, vlans = config
     vlan_ids = sorted(vlans.keys())
     headers = ['PORT', 'PVID', *vlan_ids]

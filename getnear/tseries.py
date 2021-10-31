@@ -1,4 +1,4 @@
-from getnear.config import Tagged, Ignore
+from getnear.config import Tagged, Untagged, Ignore
 from getnear.logging import info
 from lxml import etree
 import re
@@ -59,6 +59,19 @@ class TSeries:
         self.t.read_until(b'>')
         self.t.write(b'logout\n')
 
+    def get_current_config(self):
+        # (ports, pvids, {vlan_id -> {U, T, _, _...})
+        ports_pvids = dict(self.get_port_pvids())
+        ports = tuple(sorted(ports_pvids))
+        pvids = tuple(ports_pvids[p] for p in ports)
+        vlans = {}
+        vlan_ids = set(pvids) | set(self.get_vlan_ids())
+        for vlan_id in vlan_ids:
+            port_map = dict(self.get_vlan(vlan_id))
+            membership = tuple(port_map[p] for p in ports)
+            vlans[vlan_id] = membership
+        return (ports, pvids, vlans)
+
     def get_vlan_ids(self):
         self.t.write(b'show vlan brief\n')
         output = self.page().decode(errors='ignore')
@@ -77,7 +90,13 @@ class TSeries:
                 port = int(interface_port.split('/')[1])
                 is_included = current == 'Include'
                 is_tagged = 'Tagged' in line
-                yield port, (is_included, is_tagged)
+                if is_tagged:
+                    state = Tagged
+                elif is_included:
+                    state = Untagged
+                else:
+                    state = Ignore
+                yield port, state
 
     def get_port_pvids(self):
         self.t.write(b'show vlan port all\n')

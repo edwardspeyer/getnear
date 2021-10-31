@@ -2,6 +2,7 @@ import optparse
 from functools import reduce
 from getnear import checkpoint
 from getnear.config import validate, Tagged, Untagged, Ignore
+from getnear.diff import diff
 from getnear.format import format_config
 from getnear.switch import connect
 
@@ -30,11 +31,20 @@ def main(args=None):
     if not args:
         parser.error('no port specifications given')
 
+    print(f'== {options.hostname} ==\n')
+
     config = parse(args)
+    print('=== new config ===')
+    print(format_config(config))
 
-    print(format_config(options.hostname, config))
+    switch = connect(options.hostname, password=options.password)
+
+    current_config = switch.get_current_config()
+    if current_config:
+        print('=== uncommitted changes ===')
+        print(format_config(diff(current_config, config)))
+
     time = checkpoint.is_unchanged(options.hostname, config)
-
     if time:
         print(f'config unchanged since {time}')
         if options.lazy:
@@ -42,9 +52,7 @@ def main(args=None):
             return
 
     if options.commit:
-        connect(
-                options.hostname,
-                password=options.password).sync(config)
+        switch.sync(config)
         checkpoint.update(options.hostname, config)
     else:
         print('use --commit to commit changes')
