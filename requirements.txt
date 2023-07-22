@@ -1,0 +1,11 @@
+beautifulsoup4
+black
+mypy
+pre-commit
+pytest
+requests
+ruff
+tabulate
+types-beautifulsoup4
+types-requests
+types-tabulate
