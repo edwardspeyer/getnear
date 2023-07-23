@@ -174,7 +174,7 @@ def set_802_1Q_status(session, host, is_enabled):
 
 
 def add_vlan(session, host, vlan):
-    print(f"add vlan {vlan}")
+    print(f"add vlan {vlan:4d}")
     _vlan_cmd(
         session,
         host,
@@ -188,7 +188,7 @@ def add_vlan(session, host, vlan):
 
 
 def set_port_pvid(session, host, pvid, port_numbers):
-    print(f"set pvid {pvid} on ports {port_numbers}")
+    print(f"set pvid {pvid:4d} on ports {port_numbers}")
     data = {}
     data["pvid"] = str(pvid)
     for port_number in port_numbers:
@@ -200,7 +200,7 @@ def set_vlan_members(session, host, vlan, ports):  # TODO types
     assert len(ports) == 8
     port_types = [ports[k] for k in sorted(ports)]
     ui_symbols = "".join(UI_SYMBOLS[t] for t in port_types)
-    print(f"set vlan {vlan} members {ui_symbols}")
+    print(f"set vlan {vlan:4d} members {ui_symbols}")
     api_symbols = "".join(API_SYMBOLS[t] for t in port_types)
     _vlan_cmd(
         session,
@@ -333,8 +333,10 @@ def sync(host, password, layout):
             if vlan == VLAN(1):
                 continue  # There by default
             add_vlan(session, host, vlan)
-            # In order to juggle port PVIDs, every port has to initially be a
-            # member of every VLAN.
+
+        # In order to juggle port PVIDs, every port has to initially be a
+        # member of every VLAN.
+        for vlan in layout.vlans:
             all_on = dict((p, TrunkPort) for p in layout.ports())
             set_vlan_members(session, host, vlan, all_on)
 

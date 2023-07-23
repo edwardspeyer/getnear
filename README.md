@@ -29,18 +29,18 @@ PORT    PVID  1    12    15    17
      8      12  ∙    A     ∙     ∙
 set 802.1Q status False
 set 802.1Q status True
-add vlan 17
-set vlan 17 members TTTTTTTT
-add vlan 12
-set vlan 12 members TTTTTTTT
-add vlan 15
-set vlan 15 members TTTTTTTT
-set pvid 1 on ports {1, 2, 3, 4, 6, 7}
-set pvid 17 on ports {5}
-set pvid 12 on ports {8}
-set pvid 15 on ports set()
-set vlan 1 members TAAT-AA-
-set vlan 17 members T---A---
-set vlan 12 members T------A
-set vlan 15 members T--T----
+add vlan   17
+add vlan   12
+add vlan   15
+set vlan   17 members TTTTTTTT
+set vlan   12 members TTTTTTTT
+set vlan   15 members TTTTTTTT
+set pvid    1 on ports {1, 2, 3, 4, 6, 7}
+set pvid   17 on ports {5}
+set pvid   12 on ports {8}
+set pvid   15 on ports set()
+set vlan    1 members TAAT-AA-
+set vlan   17 members T---A---
+set vlan   12 members T------A
+set vlan   15 members T--T----
 ```
