@@ -19,17 +19,6 @@ PAGE_VLAN_PORT_PVIDS = "portPVID"
 VLAN = int
 PortNumber = int
 
-EXAMPLE_CONFIG = """\
-trunk   1 12 14 15  : upstream
-trunk   1 12 14 15  : switch02
-trunk   1 12 14 15  : switch03
-trunk   1 12 14 15  : switch04
-access  15          : Huawei cat monitor
-access  14          : Rostelecom smart fridge
-access  1
-access  1
-"""
-
 
 class Port:
     vlans: set[VLAN] = set()
@@ -109,30 +98,8 @@ UI_SYMBOLS: dict[type[Port], str] = {
 }
 
 
-def as_screen(text):
-    def inner():
-        on = "\033[048;2;30;30;110m"
-        off = "\033[0m"
-        lines = text.splitlines()
-        width = max(map(len, lines))
-        indent = "  "
-        yield ""
-        yield indent + on + "┏" + ("━" * width) + "┓" + off
-        for line in lines:
-            yield indent + on + "┃" + line.ljust(width) + "┃" + off
-        yield indent + on + "┗" + ("━" * width) + "┛" + off
-        yield ""
-
-    return "\n".join(inner())
-
-
 def parse_html(html):
     return BeautifulSoup(html, features="lxml")
-
-
-def is_login_page(response):
-    doc = parse_html(response.content)
-    return doc.select_one("#password") is not None
 
 
 def encrypt_password(password, nonce):
