@@ -1,5 +1,13 @@
 # getnear
 
+- Manage a wide variety of commodity ethernet switches, with ease!
+  - NetGear E-Series: supported!
+  - NetGear T-Series: no longer supported!
+- Easily add new VLANs, configure port PVIDs, and curate VLAN membership!
+- Accidentally disable access to devices used by your family!
+- Quickly re-enable access to devices used by your family!
+- Put off important tasks by fiddling with your homelab instead!
+
 ```sh
 # configure-vlans
 python3 -m getnear        \
