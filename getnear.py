@@ -1,108 +1,89 @@
+import os
 import shelve
-from argparse import ArgumentParser
 from contextlib import contextmanager
-from dataclasses import dataclass
+from enum import Enum, auto
 from hashlib import md5
 from pathlib import Path
+from typing import Iterator, Optional
 
 import requests
 from bs4 import BeautifulSoup
+from pytest import fixture, skip
 from tabulate import tabulate
 
-CONFIG_PATH = Path.home() / ".local" / "share" / "getnear"
+CONFIG_PATH = str(Path.home() / ".local" / "share" / "getnear")
 K_COOKIES = "cookies"
 
 PAGE_VLAN_CONFIG = "8021qCf"
 PAGE_VLAN_MEMBERS = "8021qMembe"
 PAGE_VLAN_PORT_PVIDS = "portPVID"
 
+DEFAULT_PASSWORD = "password"
+
 VLAN = int
-PortNumber = int
 
 
-class Port:
-    vlans: set[VLAN] = set()
+class PortType(Enum):
+    # An access port connects naive peripherals, tagging their traffic on
+    # ingress, and stripping the vlan tag from traffic for that device on
+    # egress.
+    #
+    # [U] in the UI.
+    ACCESS = auto()
+
+    # A trunk port connects switches and carries tagged traffic.
+    #
+    # [T] in the UI.
+    TRUNK = auto()
 
 
-class AccessPort(Port):
-    """An access port connects naive peripherals, tagging their traffic on
-    ingress, and stripping the vlan tag from traffic for that device on
-    egress.
+# Helpful symbols
+A = ACCESS = PortType.ACCESS
+T = TRUNK = PortType.TRUNK
 
-    [T] in the UI.
-    """
+PortSpec = dict[VLAN, PortType]
 
-    def __init__(self, vlan: VLAN):
-        self.vlan = vlan
-        self.vlans = {
-            vlan,
-        }
-
-
-class TrunkPort(Port):
-    """A trunk port connects switches and carries tagged traffic.
-
-    [U] in the UI.
-    """
-
-    def __init__(self, *vlans: VLAN):
-        assert VLAN(1) in vlans, "All trunk ports must carry vlan 1"
-        self.vlans = set(vlans)
-
-
-class UnusedPort(Port):
-    pass
-
-
-VLANs = set[VLAN]
-PVIDs = dict[VLAN, set[PortNumber]]
-Memberships = dict[VLAN, dict[PortNumber, type[Port]]]
-
-
-@dataclass
-class Layout:
-    vlans: VLANs
-    pvids: PVIDs
-    memberships: Memberships
-
-    def ports(self):
-        return sorted(p for ps in self.pvids.values() for p in ps)
-
-    def __str__(self):
-        rows = []
-        sorted_vlans = sorted(self.vlans)
-
-        port_pvids = dict((p, v) for v, ps in self.pvids.items() for p in ps)
-
-        for port in self.ports():
-            row = [port, port_pvids[port]]
-            for vlan in sorted_vlans:
-                m = self.memberships[vlan][port]
-                c = "\N{BULLET OPERATOR}" if m == UnusedPort else m.__name__[0]
-                row.append(c)
-            rows.append(row)
-        headers = ["PORT", "PVID", *(str(v) for v in sorted_vlans)]
-        return tabulate(rows, headers=headers)
-
-
-API_SYMBOLS: dict[type[Port], str] = {
-    TrunkPort: "1",
-    AccessPort: "2",
-    UnusedPort: "3",
+API_SYMBOLS: dict[PortType | None, str] = {
+    PortType.ACCESS: "1",
+    PortType.TRUNK: "2",
+    None: "3",
 }
 
-UI_SYMBOLS: dict[type[Port], str] = {
-    TrunkPort: "T",
-    AccessPort: "A",
-    UnusedPort: "-",
+UI_SYMBOLS: dict[PortType | None, str] = {
+    PortType.TRUNK: "T",
+    PortType.ACCESS: "A",
+    None: "\N{BULLET OPERATOR}",
 }
 
 
-def parse_html(html):
+def format_ports(ports: list[PortSpec]) -> str:
+    vlans = calculate_vlans(ports)
+    pvids = calculate_pvids(ports)
+    memberships = calculate_memberships(ports)
+
+    def build_headers():
+        yield "PORT"
+        yield "PVID"
+        for vlan in sorted(vlans):
+            yield vlan
+
+    def format_port(index):
+        yield index + 1
+        yield pvids[index]
+        for vlan in sorted(vlans):
+            yield UI_SYMBOLS[memberships[vlan][index]]
+
+    return tabulate(
+        (format_port(i) for i, _ in enumerate(ports)),
+        headers=build_headers(),
+    )
+
+
+def parse_html(html: bytes):
     return BeautifulSoup(html, features="lxml")
 
 
-def encrypt_password(password, nonce):
+def encrypt_password(password: str, nonce: str):
     def merge(a: str, b: str):
         buf = ""
         for ca, cb in zip(a, b):
@@ -116,34 +97,103 @@ def encrypt_password(password, nonce):
     return md5(data).hexdigest()
 
 
-def raise_error_from(response):
-    error = parse_html(response.content).select_one("#err_msg")
-    if not error:
-        return response
-    if message := error["value"]:
-        raise Exception(message)
+def get_error_from(content: bytes) -> Optional[str]:
+    error = parse_html(content).select_one("#err_msg")
+    if error:
+        return error.get("value")
+    else:
+        return None
 
 
-def is_logged_in(session, url):
-    response = session.get(f"http://{url}/index.htm")
-    return b"Switch Information" in response.content
+def raise_error_from(content: bytes):
+    if error := get_error_from(content):
+        raise Exception(f"UI error: {error}")
 
 
-def login(session, host, password):
-    print("Logging in")
-    login_page = session.get(f"http://{host}/login.htm").content
-    rand = parse_html(login_page).select_one("#rand")["value"]
-    response = session.post(
+def login(
+    session: requests.Session,
+    host: str,
+    password: str,
+):
+    r = session.get(f"http://{host}/login.htm")
+    nonce = parse_html(r.content).select_one("#rand")["value"]
+    r = session.post(
         f"http://{host}/login.cgi",
-        data=dict(
-            password=encrypt_password(password, rand),
-        ),
+        {
+            "password": encrypt_password(password, nonce),
+        },
     )
-    raise_error_from(response)
+
+    if error := get_error_from(r.content):
+        if "The password is invalid" in error:
+            return False
+        else:
+            raise Exception(error)
+    elif b"RedirectToIndexPage()" in r.content:
+        session.get(f"http://{host}/index.htm")
+        return True
+    else:
+        raise Exception("Unexpected response: {r.content}")
+
+
+def change_password(
+    session: requests.Session,
+    host: str,
+    old_password: str,
+    new_password: str,
+):
+    print("Looking for change-password hash")
+    r = session.get(
+        f"http://{host}/pwd_ck.htm",
+        headers={"Referer": f"http://{host}/index.htm"},
+    )
+    hash = parse_html(r.content).select_one("#hashEle")["value"]
+    print(f"Changing password with {hash=}")
+    session.post(
+        f"http://{host}/changeDefPwd.cgi",
+        {
+            "hash": hash,
+            "oldPassword": old_password,
+            "newPassword": new_password,
+        },
+    )
+    print("Password should now be changed")
+
+
+def provision(
+    session: requests.Session,
+    host: str,
+    password: str,
+):
+    r = session.get(
+        f"http://{host}/index.htm",
+        allow_redirects=True,
+    )
+
+    if b"Thank you for selecting NETGEAR products" in r.content:
+        print("Already logged in with a valid cookie")
+        return
+
+    if b"RedirectToLoginPage()" not in r.content:
+        raise Exception(f"unknown state for page: {r.content!r}")
+
+    print("Need to login again and get a new cookie...")
+    session.cookies.clear()
+
+    print("Trying the default password...")
+    if login(session, host, DEFAULT_PASSWORD):
+        print("Need to change password...")
+        change_password(session, host, DEFAULT_PASSWORD, password)
+    else:
+        print("Trying the custom password")
+        if not login(session, host, password):
+            raise Exception("Couldn't log in")
+
+    print("We should now be logged in")
 
 
 @contextmanager
-def build_session():
+def build_session() -> Iterator[requests.Session]:
     with shelve.open(CONFIG_PATH, "c") as shelf:
         session = requests.Session()
         if data := shelf.get(K_COOKIES):
@@ -154,18 +204,28 @@ def build_session():
         shelf[K_COOKIES] = data
 
 
-def _vlan_cmd(session, host, command, **args):
-    response = session.get(f"http://{host}/{command}.htm")
-    doc = parse_html(response.content)
-    hash = doc.select_one("#hash")["value"]
+def vlan_cmd(
+    session: requests.Session,
+    host: str,
+    command: str,
+    **args,
+):
+    response1 = session.get(f"http://{host}/{command}.htm")
+    hash_el = parse_html(response1.content).select_one("#hash")
+    assert hash_el, f"no hash in {response1.content!r}"
+    hash = hash_el["value"]
     data = dict(hash=hash, **args)
-    response = session.post(f"http://{host}/{command}.cgi", data=data)
-    raise_error_from(response)
+    response2 = session.post(f"http://{host}/{command}.cgi", data=data)
+    raise_error_from(response2.content)
 
 
-def set_802_1Q_status(session, host, is_enabled):
+def set_802_1Q_status(
+    session: requests.Session,
+    host: str,
+    is_enabled: bool,
+):
     print(f"set 802.1Q status {is_enabled}")
-    _vlan_cmd(
+    vlan_cmd(
         session,
         host,
         PAGE_VLAN_CONFIG,
@@ -173,9 +233,13 @@ def set_802_1Q_status(session, host, is_enabled):
     )
 
 
-def add_vlan(session, host, vlan):
+def add_vlan(
+    session: requests.Session,
+    host: str,
+    vlan: VLAN,
+):
     print(f"add vlan {vlan:4d}")
-    _vlan_cmd(
+    vlan_cmd(
         session,
         host,
         PAGE_VLAN_CONFIG,
@@ -187,22 +251,31 @@ def add_vlan(session, host, vlan):
     )
 
 
-def set_port_pvid(session, host, pvid, port_numbers):
-    print(f"set pvid {pvid:4d} on ports {port_numbers}")
-    data = {}
-    data["pvid"] = str(pvid)
-    for port_number in port_numbers:
-        data[f"port{port_number}"] = "checked"
-    _vlan_cmd(session, host, PAGE_VLAN_PORT_PVIDS, **data)
+def set_port_pvid(
+    session: requests.Session,
+    host: str,
+    pvid: VLAN,
+    port_number: int,
+):
+    print(f"set pvid {pvid:4d} on port {port_number}")
+    data = {
+        "pvid": str(pvid),
+        f"port{port_number}": "checked",
+    }
+    vlan_cmd(session, host, PAGE_VLAN_PORT_PVIDS, **data)
 
 
-def set_vlan_members(session, host, vlan, ports):  # TODO types
-    assert len(ports) == 8
-    port_types = [ports[k] for k in sorted(ports)]
+def set_vlan_members(
+    session: requests.Session,
+    host: str,
+    vlan: VLAN,
+    port_types: list[PortType | None],
+):
+    assert len(port_types) == 8
     ui_symbols = "".join(UI_SYMBOLS[t] for t in port_types)
     print(f"set vlan {vlan:4d} members {ui_symbols}")
     api_symbols = "".join(API_SYMBOLS[t] for t in port_types)
-    _vlan_cmd(
+    vlan_cmd(
         session,
         host,
         PAGE_VLAN_MEMBERS,
@@ -212,170 +285,96 @@ def set_vlan_members(session, host, vlan, ports):  # TODO types
     )
 
 
-def convert_to_layout(ports: list[Port]) -> Layout:
-    # numbered_ports = [(PortNumber(i + 1), p) for i, p in enumerate(ports)]
-    # TODO ^^ use this
+def calculate_vlans(ports: list[PortSpec]) -> set[VLAN]:
+    return set(vlan for port in ports for vlan in port)
 
-    # Gather known VLANs
-    vlans = set(v for p in ports for v in p.vlans) | {VLAN(1)}
 
-    # Access ports get their PVID set, otherwise use 1
-    pvids: dict[VLAN, set[PortNumber]] = dict((v, set()) for v in vlans)
-    for i, port in enumerate(ports):
-        port_number = PortNumber(i + 1)
-        if isinstance(port, AccessPort):
-            pvids[port.vlan].add(port_number)
+def calculate_pvids(ports: list[PortSpec]) -> list[VLAN]:
+    def get_pvid(port: dict[VLAN, PortType]):
+        access_vlans = [v for v, pt in port.items() if pt == PortType.ACCESS]
+        if len(access_vlans) > 1:
+            raise Exception(f"unknown PVID; port has >1 access VLANs: {port}")
+        elif len(access_vlans) == 1:
+            return access_vlans[0]
         else:
-            # PVID for a trunk port should be 1
-            pvids[1].add(port_number)
+            return 1
 
-    # Port memberships for each vlan.
-    memberships: Memberships = {}
-    for vlan in vlans:
-        mem = {}
-        for i, port in enumerate(ports):
-            pn = PortNumber(i + 1)
-            if vlan in port.vlans:
-                mem[pn] = type(port)
-            else:
-                mem[pn] = UnusedPort
-        memberships[vlan] = mem
-
-    return Layout(vlans, pvids, memberships)
+    return [get_pvid(port) for port in ports]
 
 
-def test_layout():
-    ports = [
-        TrunkPort(1, 12),
-        TrunkPort(1, 14),
-        TrunkPort(1, 12, 14),
-        AccessPort(1),
-        AccessPort(12),
-        AccessPort(1),
-        AccessPort(1),
-        AccessPort(14),
-    ]
-    expected = Layout(
-        {
-            VLAN(1),
-            VLAN(12),
-            VLAN(14),
-        },
-        {
-            VLAN(1): {
-                PortNumber(1),
-                PortNumber(2),
-                PortNumber(3),
-                PortNumber(4),
-                PortNumber(6),
-                PortNumber(7),
-            },
-            VLAN(12): {
-                PortNumber(5),
-            },
-            VLAN(14): {
-                PortNumber(8),
-            },
-        },
-        {
-            VLAN(1): {
-                PortNumber(1): TrunkPort,
-                PortNumber(2): TrunkPort,
-                PortNumber(3): TrunkPort,
-                PortNumber(4): AccessPort,
-                PortNumber(5): UnusedPort,
-                PortNumber(6): AccessPort,
-                PortNumber(7): AccessPort,
-                PortNumber(8): UnusedPort,
-            },
-            VLAN(12): {
-                PortNumber(1): TrunkPort,
-                PortNumber(2): UnusedPort,
-                PortNumber(3): TrunkPort,
-                PortNumber(4): UnusedPort,
-                PortNumber(5): AccessPort,
-                PortNumber(6): UnusedPort,
-                PortNumber(7): UnusedPort,
-                PortNumber(8): UnusedPort,
-            },
-            VLAN(14): {
-                PortNumber(1): UnusedPort,
-                PortNumber(2): TrunkPort,
-                PortNumber(3): TrunkPort,
-                PortNumber(4): UnusedPort,
-                PortNumber(5): UnusedPort,
-                PortNumber(6): UnusedPort,
-                PortNumber(7): UnusedPort,
-                PortNumber(8): AccessPort,
-            },
-        },
-    )
-    actual = convert_to_layout(ports)
-    assert actual == expected
-
-
-def sync(host, password, layout):
-    with build_session() as session:
-        # Log in
-        response = session.get(
-            f"http://{host}/index.htm",
-            allow_redirects=True,
+def calculate_memberships(
+    ports: list[PortSpec],
+) -> dict[VLAN, list[PortType | None]]:
+    return dict(
+        (
+            v,
+            [p.get(v) for p in ports],
         )
-        if b"RedirectToLoginPage" in response.content:
-            login(session, host, password)
+        for v in calculate_vlans(ports)
+    )
+
+
+@fixture
+def example():
+    return [
+        {1: A},
+        {1: A, 12: T, 14: T},
+        {1: A},
+        {1: A},
+        {12: A},
+        {13: A},
+        {14: A},
+        {1: T, 12: T, 13: T, 14: T},
+    ]
+
+
+def test_calculations(example):
+    _ = None
+    assert calculate_vlans(example) == {1, 12, 13, 14}
+    assert calculate_pvids(example) == [1, 1, 1, 1, 12, 13, 14, 1]
+    assert calculate_memberships(example) == {
+        VLAN(1): [A, A, A, A, _, _, _, T],
+        VLAN(12): [_, T, _, _, A, _, _, T],
+        VLAN(13): [_, _, _, _, _, A, _, T],
+        VLAN(14): [_, T, _, _, _, _, A, T],
+    }
+
+
+def test_format(example):
+    print("\n" + format_ports(example))
+
+
+def test_real(example):
+    var = "GETNEAR_TEST_HOST"
+    if host := os.environ.get(var):
+        sync_ports(host, "parsewort", example)
+    else:
+        skip("!!")
+
+
+def sync_ports(host: str, password: str, ports: list[PortSpec]):
+    with build_session() as session:
+        provision(session, host, password)
 
     with build_session() as session:
         # Reset settings
         set_802_1Q_status(session, host, False)
         set_802_1Q_status(session, host, True)
 
-        for vlan in layout.vlans:
+        for vlan in calculate_vlans(ports):
             if vlan == VLAN(1):
                 continue  # There by default
             add_vlan(session, host, vlan)
 
         # In order to juggle port PVIDs, every port has to initially be a
         # member of every VLAN.
-        for vlan in layout.vlans:
-            all_on = dict((p, TrunkPort) for p in layout.ports())
+        for vlan in calculate_vlans(ports):
+            all_on: list[PortType | None] = [PortType.TRUNK for _ in ports]
             set_vlan_members(session, host, vlan, all_on)
 
-        for vlan, port_numbers in layout.pvids.items():
-            set_port_pvid(session, host, vlan, port_numbers)
+        for index, pvid in enumerate(calculate_pvids(ports)):
+            port_number = index + 1
+            set_port_pvid(session, host, pvid, port_number)
 
-        for vlan, ports in layout.memberships.items():
-            set_vlan_members(session, host, vlan, ports)
-
-
-def main():
-    def trunk_port(vlans_string: str):
-        vlans = {int(v) for v in vlans_string.split(",")}
-        return TrunkPort(*vlans)
-
-    def access_port(vlan_string: str):
-        vlan = int(vlan_string)
-        return AccessPort(vlan)
-
-    parser = ArgumentParser()
-    parser.add_argument("hostname")
-    parser.add_argument("password")
-    parser.add_argument(
-        "--trunk-port",
-        type=trunk_port,
-        dest="ports",
-        action="append",
-    )
-    parser.add_argument(
-        "--access-port",
-        type=access_port,
-        dest="ports",
-        action="append",
-    )
-    args = parser.parse_args()
-    layout = convert_to_layout(args.ports)
-    print(layout)
-    sync(args.hostname, args.password, layout)
-
-
-if __name__ == "__main__":
-    main()
+        for vlan, port_types in calculate_memberships(ports).items():
+            set_vlan_members(session, host, vlan, port_types)
