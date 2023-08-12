@@ -292,10 +292,26 @@ def calculate_vlans(ports: list[PortSpec]) -> set[VLAN]:
 def calculate_pvids(ports: list[PortSpec]) -> list[VLAN]:
     def get_pvid(port: dict[VLAN, PortType]):
         access_vlans = [v for v, pt in port.items() if pt == PortType.ACCESS]
+        trunk_vlans = [v for v, pt in port.items() if pt == PortType.TRUNK]
         if len(access_vlans) > 1:
             raise Exception(f"unknown PVID; port has >1 access VLANs: {port}")
         elif len(access_vlans) == 1:
             return access_vlans[0]
+        elif trunk_vlans:
+            #
+            # If one port trunks a single non-admin VLAN...
+            #
+            #   [{999:T}, {1:A}, {1:A}, ..., {1:A}]
+            #
+            # ...then the port PVID should be for that trunked vlan, even
+            # though it doesn't make any sense to have a PVID for a port that's
+            # only receiving already-tagged traffic.
+            #
+            # If we don't do this, then the switch UI complains about removing
+            # the port as a member of VLAN 1 (the default settings) when its
+            # PVID is still set to 1.
+            #
+            return trunk_vlans[0]
         else:
             return 1
 
