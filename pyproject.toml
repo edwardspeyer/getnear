@@ -1,3 +1,13 @@
+[project]
+name = "getnear"
+license = {text = "MIT"}
+dependencies = [
+    "beautifulsoup4",
+    "requests",
+    "tabulate",
+]
+version = "0.2"
+
 [tool.black]
 line_length = 179
 
